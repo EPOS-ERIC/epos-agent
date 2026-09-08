@@ -1,0 +1,21 @@
+# mcpo wrapper image: exposes the stdio MCP server as an OpenAPI endpoint,
+# so OpenWebUI can attach to it over HTTP.
+#
+# Build the base image first, then pass it as BASE_IMAGE:
+#   docker build -t mcp-fdsnws-event-server .
+#   docker build -f Dockerfile.mcpo --build-arg BASE_IMAGE=mcp-fdsnws-event-server:latest -t fdsnws-event-mcpo .
+# (./run_tests.sh also builds the base image. In CI the workflow passes the
+#  immutable digest of the freshly pushed base image.)
+ARG BASE_IMAGE=mcp-fdsnws-event-server:latest
+FROM ${BASE_IMAGE}
+
+USER root
+RUN pip install --no-cache-dir mcpo
+USER mcp
+
+EXPOSE 8000
+
+# mcpo spawns the MCP server as a stdio subprocess (no docker-in-docker)
+# and proxies its tools as an OpenAPI/REST API on :8000.
+CMD ["mcpo", "--host", "0.0.0.0", "--port", "8000", "--", \
+     "python", "-m", "fdsnws_event_server.server"]

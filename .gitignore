@@ -1,0 +1,23 @@
+# Local runtime state
+.runtime/
+cache/
+logs/
+sessions/
+workspace/*
+!workspace/.gitkeep
+config/pi-agent/
+config/profile.env
+
+# Python
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+
+# Local secrets and editor files
+.env
+.env.*
+!.env.example
+.DS_Store
+.vscode/
+.idea/
