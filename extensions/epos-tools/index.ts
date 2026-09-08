@@ -110,6 +110,13 @@ async function fetchJson(u: URL, signal?: AbortSignal) {
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText} from ${u}: ${text.slice(0, 1000)}`);
   return { data, status: res.status, contentType: res.headers.get("content-type") || "unknown", bytes: new TextEncoder().encode(text).length };
 }
+function collectDistributions(node: any, out: any[] = []): any[] {
+  if (Array.isArray(node)) { for (const item of node) collectDistributions(item, out); return out; }
+  if (!node || typeof node !== "object") return out;
+  if (Array.isArray(node.distributions)) out.push(...node.distributions);
+  for (const [key, value] of Object.entries(node)) if (key !== "distributions") collectDistributions(value, out);
+  return out;
+}
 function summarizeResource(r: any) {
   return {
     id: r.id, metaId: r.metaId, uid: r.uid, title: r.title,
@@ -146,7 +153,7 @@ const searchTool = defineTool({
     const limit = Math.max(1, Math.min(Number(params.limit || 10), 50));
     const payload = await eposMcpCall("search_resources", { ...params, limit: undefined, includeFacets: undefined, facets: !!params.includeFacets });
     const { data, endpoint, status, contentType, bytes } = payload;
-    const distributions = data?.results?.distributions || [];
+    const distributions = collectDistributions(data?.results);
     const record = { action: "search", timestamp: now(), endpoint, parameters: params, status, contentType, bytes, resultCount: distributions.length };
     const provenanceFile = await logProvenance(record);
     const result = { provenance: { ...record, provenanceFile }, totalResults: distributions.length, resources: distributions.slice(0, limit).map(summarizeResource), filters: params.includeFacets ? data.filters : undefined };
