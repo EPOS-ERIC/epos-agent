@@ -147,7 +147,7 @@ const searchTool = defineTool({
     const payload = await eposMcpCall("search_resources", { ...params, limit: undefined, includeFacets: undefined, facets: !!params.includeFacets });
     const { data, endpoint, status, contentType, bytes } = payload;
     const distributions = data?.results?.distributions || [];
-    const record = { action: "search", timestamp: now(), endpoint: u.toString(), parameters: params, status, contentType, bytes, resultCount: distributions.length };
+    const record = { action: "search", timestamp: now(), endpoint, parameters: params, status, contentType, bytes, resultCount: distributions.length };
     const provenanceFile = await logProvenance(record);
     const result = { provenance: { ...record, provenanceFile }, totalResults: distributions.length, resources: distributions.slice(0, limit).map(summarizeResource), filters: params.includeFacets ? data.filters : undefined };
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
