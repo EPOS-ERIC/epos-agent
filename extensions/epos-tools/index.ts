@@ -10,6 +10,8 @@ const ROOT = process.env.EPOS_AGENT_ROOT || `${process.env.HOME}/epos-agent`;
 const API_BASE = process.env.EPOS_API_BASE || "https://www.ics-c.epos-eu.org/api/v1";
 const PROV_DIR = join(ROOT, "logs", "provenance");
 const FDSN_CMD = join(ROOT, "services", "mcp-fdsnws-event", ".venv", "bin", "mcp-fdsnws-event-server");
+const EPOS_MCP_SERVER = join(ROOT, "services", "mcp-epos", "src", "server.mjs");
+const EPOS_MCP_NODE = process.env.EPOS_MCP_NODE || "node";
 const WORKSPACE = resolve(ROOT, "workspace");
 function isInsideWorkspace(p: string, cwd: string) {
   const target = resolve(cwd, p);
@@ -17,13 +19,14 @@ function isInsideWorkspace(p: string, cwd: string) {
 }
 
 class StdioMcpClient {
+  constructor(private command: string, private args: string[] = [], private cwd = ROOT) {}
   private proc?: ChildProcessWithoutNullStreams;
   private rl?: Interface;
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   async start() {
     if (this.proc && !this.proc.killed) return;
-    this.proc = spawn(FDSN_CMD, [], { cwd: join(ROOT, "services", "mcp-fdsnws-event"), stdio: ["pipe", "pipe", "pipe"] });
+    this.proc = spawn(this.command, this.args, { cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"] });
     this.proc.stderr.on("data", (d) => { /* keep stderr off stdout; inspect logs/mcp-smoke.err for smoke tests */ });
     this.proc.on("exit", () => {
       for (const p of this.pending.values()) p.reject(new Error("mcp-fdsnws-event exited"));
@@ -56,7 +59,16 @@ class StdioMcpClient {
   }
   async stop() { this.rl?.close(); if (this.proc && !this.proc.killed) this.proc.kill(); }
 }
-const mcp = new StdioMcpClient();
+const mcp = new StdioMcpClient(FDSN_CMD, [], join(ROOT, "services", "mcp-fdsnws-event"));
+const eposMcp = new StdioMcpClient(EPOS_MCP_NODE, [EPOS_MCP_SERVER], join(ROOT, "services", "mcp-epos"));
+async function eposMcpCall(toolName: string, args: Record<string, unknown>) {
+  await eposMcp.start();
+  const response = await eposMcp.request("tools/call", { name: toolName, arguments: args });
+  if (response?.isError) throw new Error(response.content?.find((c: any) => c.type === "text")?.text || `EPOS MCP tool failed: ${toolName}`);
+  const text = response?.content?.find((c: any) => c.type === "text")?.text;
+  if (!text) throw new Error(`EPOS MCP returned no text for ${toolName}`);
+  return JSON.parse(text);
+}
 const execFileAsync = promisify(execFile);
 function imageMime(path: string) {
   const ext = extname(path).toLowerCase();
@@ -132,12 +144,29 @@ const searchTool = defineTool({
   }),
   async execute(_id, params: any, signal) {
     const limit = Math.max(1, Math.min(Number(params.limit || 10), 50));
-    const u = url("/resources/search", { ...params, limit: undefined, includeFacets: undefined, facets: !!params.includeFacets });
-    const { data, status, contentType, bytes } = await fetchJson(u, signal);
+    const payload = await eposMcpCall("search_resources", { ...params, limit: undefined, includeFacets: undefined, facets: !!params.includeFacets });
+    const { data, endpoint, status, contentType, bytes } = payload;
     const distributions = data?.results?.distributions || [];
     const record = { action: "search", timestamp: now(), endpoint: u.toString(), parameters: params, status, contentType, bytes, resultCount: distributions.length };
     const provenanceFile = await logProvenance(record);
     const result = { provenance: { ...record, provenanceFile }, totalResults: distributions.length, resources: distributions.slice(0, limit).map(summarizeResource), filters: params.includeFacets ? data.filters : undefined };
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
+  },
+});
+
+const softwareSearchTool = defineTool({
+  name: "epos_search_software",
+  label: "EPOS Search Software",
+  description: "Search the authoritative EPOS software catalogue. Use this tool for software questions, not epos_search_resources.",
+  parameters: Type.Object({
+    q: Type.Optional(Type.String({ description: "Software name, description or keyword" })),
+    versioningStatus: Type.Optional(Type.String({ description: "Optional EPOS versioning status filter" })),
+  }),
+  async execute(_id, params: any) {
+    const payload = await eposMcpCall("search_software", params);
+    const record = { action: "software-search", timestamp: now(), endpoint: payload.endpoint, parameters: params, status: payload.status, contentType: payload.contentType, bytes: payload.bytes };
+    const provenanceFile = await logProvenance(record);
+    const result = { provenance: { ...record, provenanceFile }, data: payload.data };
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
   },
 });
@@ -151,9 +180,9 @@ const describeResourceTool = defineTool({
     extended: Type.Optional(Type.Boolean({ description: "Request extended metadata payload (can be large)" })),
   }),
   async execute(_id, params: any, signal) {
-    const u = url(`/resources/details/${encodeURIComponent(params.resourceId)}`, { extended: params.extended || undefined });
-    const { data, status, contentType, bytes } = await fetchJson(u, signal);
-    const record = { action: "describe-resource", timestamp: now(), resourceId: params.resourceId, endpoint: u.toString(), status, contentType, bytes };
+    const payload = await eposMcpCall("get_resource_details", { instance_id: params.resourceId, extended: params.extended });
+    const { data, endpoint, status, contentType, bytes } = payload;
+    const record = { action: "describe-resource", timestamp: now(), resourceId: params.resourceId, endpoint, status, contentType, bytes };
     const provenanceFile = await logProvenance(record);
     const result = { provenance: { ...record, provenanceFile }, resource: data };
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
@@ -166,20 +195,20 @@ const describeServiceTool = defineTool({
   description: "Describe the executable service, endpoint, advertised parameters, linked entities, formats, providers, and documentation for an EPOS resource ID.",
   parameters: Type.Object({ resourceId: Type.String({ description: "EPOS distribution/resource instance id" }) }),
   async execute(_id, params: any, signal) {
-    const detailsUrl = url(`/resources/details/${encodeURIComponent(params.resourceId)}`);
-    const linkedUrl = url(`/resources/linkedentities/parameters/${encodeURIComponent(params.resourceId)}`);
-    const [details, linked] = await Promise.allSettled([fetchJson(detailsUrl, signal), fetchJson(linkedUrl, signal)]);
-    if (details.status === "rejected") throw details.reason;
-    const d = details.value.data;
+    const [details, linked] = await Promise.all([
+      eposMcpCall("get_resource_details", { instance_id: params.resourceId }),
+      eposMcpCall("get_service_parameters", { instance_id: params.resourceId }),
+    ]);
+    const d = details.data;
     const service = {
       resourceId: params.resourceId, metaId: d.metaId, uid: d.uid, title: d.title,
       serviceName: d.serviceName, serviceDescription: d.serviceDescription, serviceDocumentation: d.serviceDocumentation,
       endpointTemplate: d.endpoint, serviceEndpoint: d.serviceEndpoint, operationid: d.operationid,
       serviceProvider: d.serviceProvider, dataProvider: d.dataProvider,
       serviceParameters: d.serviceParameters || [], availableFormats: d.availableFormats || [],
-      linkedParameters: linked.status === "fulfilled" ? linked.value.data : { error: String(linked.reason) },
+      linkedParameters: linked.data,
     };
-    const record = { action: "describe-service", timestamp: now(), resourceId: params.resourceId, endpoint: detailsUrl.toString(), linkedEndpoint: linkedUrl.toString(), contentType: details.value.contentType };
+    const record = { action: "describe-service", timestamp: now(), resourceId: params.resourceId, endpoint: details.endpoint, linkedEndpoint: linked.endpoint, contentType: details.contentType, bytes: details.bytes + linked.bytes };
     const provenanceFile = await logProvenance(record);
     const result = { provenance: { ...record, provenanceFile }, service };
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
@@ -205,7 +234,7 @@ const executeTool = defineTool({
   }),
   async execute(_id, params: any, signal) {
     const strict = params.strictValidation !== false;
-    const details = await getDetails(params.resourceId, false, signal);
+    const details = await eposMcpCall("get_resource_details", { instance_id: params.resourceId });
     const meta = details.data;
     const serviceParams = meta.serviceParameters || [];
     const provided = params.serviceParameters || {};
@@ -226,18 +255,17 @@ const executeTool = defineTool({
     }
     const q: any = { useDefaults: !!params.useDefaults || undefined, format: params.format, inputFormat: params.inputFormat, pluginId: params.pluginId, startDate: params.startDate, endDate: params.endDate, bbox: params.bbox };
     if (Object.keys(provided).length) q.params = JSON.stringify(provided);
-    const u = url(`/execute/${encodeURIComponent(params.resourceId)}`, q);
-    const res = await fetch(u, { signal, headers: { accept: params.format || "*/*" } });
-    const ab = await res.arrayBuffer();
-    const bytes = ab.byteLength;
+    const execution = await eposMcpCall("execute_service", { instance_id: params.resourceId, ...q });
+    const bytes = execution.bytes || 0;
     const maxBytes = Math.max(1000, Math.min(Number(params.maxBytes || 50000), 1000000));
-    const contentType = res.headers.get("content-type") || "unknown";
-    const raw = new TextDecoder().decode(ab.slice(0, maxBytes));
-    const truncated = bytes > maxBytes;
-    const record = { action: "execute-service", timestamp: now(), resourceId: params.resourceId, resourceMetaId: meta.metaId, serviceName: meta.serviceName, provider: meta.serviceProvider?.dataProviderLegalName, endpoint: u.toString(), serviceEndpoint: meta.serviceEndpoint, parameters: { ...q, params: provided }, status: res.status, contentType, bytes, truncated };
+    const contentType = execution.contentType || "unknown";
+    const raw = typeof execution.data === "string" ? execution.data : JSON.stringify(execution.data, null, 2);
+    const truncated = raw.length > maxBytes;
+    const preview = raw.slice(0, maxBytes);
+    const record = { action: "execute-service", timestamp: now(), resourceId: params.resourceId, resourceMetaId: meta.metaId, serviceName: meta.serviceName, provider: meta.serviceProvider?.dataProviderLegalName, endpoint: execution.endpoint, serviceEndpoint: meta.serviceEndpoint, parameters: { ...q, params: provided }, status: execution.status, contentType, bytes, truncated };
     const provenanceFile = await logProvenance(record);
-    if (!res.ok) throw new Error(`EPOS execute failed: HTTP ${res.status} ${res.statusText} from ${u}\n${raw.slice(0, 2000)}\nProvenance: ${provenanceFile}`);
-    const result = { provenance: { ...record, provenanceFile }, dataPreview: raw, truncated };
+    if (execution.status >= 400) throw new Error(`EPOS execute failed: HTTP ${execution.status} from ${execution.endpoint}\n${preview.slice(0, 2000)}\nProvenance: ${provenanceFile}`);
+    const result = { provenance: { ...record, provenanceFile }, dataPreview: preview, truncated };
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
   },
 });
@@ -323,12 +351,14 @@ export default function (pi: ExtensionAPI) {
     // Do not keep the large logo as a persistent widget: it crowds the editor area.
     // The full ASCII-art logo is printed once by the launcher before Pi starts.
     ctx.ui.setTitle("EPOS Agent");
+    try { await eposMcp.start(); ctx.ui.setStatus("epos-api-mcp", "EPOS API MCP ready"); }
+    catch (e) { ctx.ui.setStatus("epos-api-mcp", "EPOS API MCP unavailable"); }
     ctx.ui.setWorkingIndicator({ frames: ["🌍", "🌎", "🌏"], intervalMs: 180 });
     ctx.ui.setStatus("epos", "EPOS Agent");
     try { await mcp.start(); ctx.ui.setStatus("epos-fdsn", "FDSN MCP ready"); }
     catch (e) { ctx.ui.setStatus("epos-fdsn", "FDSN MCP unavailable"); }
   });
-  pi.on("session_shutdown", async () => { await mcp.stop(); });
+  pi.on("session_shutdown", async () => { await Promise.all([mcp.stop(), eposMcp.stop()]); });
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "write" && event.toolName !== "edit") return;
     const input: any = event.input || {};
@@ -343,6 +373,7 @@ export default function (pi: ExtensionAPI) {
   });
   pi.registerCommand("epos", { description: "Show EPOS Agent banner and operational hints", handler: async (_args, ctx) => { ctx.ui.notify("EPOS Agent: use epos_search_resources → epos_describe_service → epos_execute_service. Writable workspace: ~/epos-agent/workspace", "info"); } });
   pi.registerTool(searchTool);
+  pi.registerTool(softwareSearchTool);
   pi.registerTool(describeResourceTool);
   pi.registerTool(describeServiceTool);
   pi.registerTool(executeTool);

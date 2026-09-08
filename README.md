@@ -4,7 +4,7 @@
   <img src="docs/assets/epos-agent-header.png" alt="EPOS Agent — European Plate Observing System" width="100%">
 </p>
 
-EPOS Agent is a terminal UI assistant for discovering and using EPOS Platform solid-Earth data services. It provides metadata-driven EPOS catalogue search, service description and validation, read-only service execution, provenance logging, Python analysis in a controlled workspace, and an FDSN Event MCP integration.
+EPOS Agent is a terminal UI assistant for discovering and using EPOS Platform solid-Earth data services. It provides metadata-driven EPOS catalogue search, dedicated EPOS software search, service description and validation, read-only service execution, provenance logging, Python analysis in a controlled workspace, and MCP integrations for both the EPOS API Gateway and FDSN events.
 
 ## Quick start (macOS/Linux)
 
@@ -21,7 +21,7 @@ From the repository directory:
 ~/epos-agent/bin/epos-agent
 ```
 
-The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, creates an isolated Python environment for the bundled FDSN service, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
+The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, installs the bundled EPOS API MCP under `services/mcp-epos`, creates an isolated Python environment for the bundled FDSN MCP, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
 
 To test another installation location without touching an existing installation:
 

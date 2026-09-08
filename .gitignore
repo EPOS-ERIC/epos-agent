@@ -8,6 +8,9 @@ workspace/*
 config/pi-agent/
 config/profile.env
 
+# Node
+**/node_modules/
+
 # Python
 **/.venv/
 **/__pycache__/

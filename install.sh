@@ -41,6 +41,9 @@ say "Installing pi coding agent locally"
 mkdir -p "$INSTALL_ROOT/.runtime"
 npm install --prefix "$INSTALL_ROOT/.runtime" --no-fund --no-audit "$PI_PACKAGE@latest"
 
+say "Installing EPOS API MCP"
+npm install --prefix "$INSTALL_ROOT/services/mcp-epos" --no-fund --no-audit
+
 say "Creating Python environment for FDSN MCP"
 python3 -m venv "$INSTALL_ROOT/services/mcp-fdsnws-event/.venv"
 "$INSTALL_ROOT/services/mcp-fdsnws-event/.venv/bin/python" -m pip install --upgrade pip >/dev/null
