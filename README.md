@@ -1,5 +1,9 @@
 # EPOS Agent
 
+<p align="center">
+  <img src="docs/assets/epos-agent-header.png" alt="EPOS Agent — European Plate Observing System" width="100%">
+</p>
+
 EPOS Agent is a terminal UI assistant for discovering and using EPOS Platform solid-Earth data services. It provides metadata-driven EPOS catalogue search, service description and validation, read-only service execution, provenance logging, Python analysis in a controlled workspace, and an FDSN Event MCP integration.
 
 ## Quick start (macOS/Linux)
