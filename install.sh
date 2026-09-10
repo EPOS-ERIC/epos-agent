@@ -24,7 +24,15 @@ install_dependencies() {
   local os packages=()
   os="$(uname -s)"
   if [[ "$os" == "Darwin" ]]; then
-    command -v brew >/dev/null 2>&1 || fail "Homebrew is required on macOS. Install it from https://brew.sh/ and re-run."
+    if ! command -v brew >/dev/null 2>&1; then
+      confirm_install
+      say "Installing Homebrew (required to install Node.js and Python)"
+      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+      if [[ -x /opt/homebrew/bin/brew ]]; then export PATH="/opt/homebrew/bin:$PATH"; fi
+      if [[ -x /usr/local/bin/brew ]]; then export PATH="/usr/local/bin:$PATH"; fi
+      hash -r 2>/dev/null || true
+    fi
+    command -v brew >/dev/null 2>&1 || fail "Homebrew installation failed. Install it from https://brew.sh/ and re-run."
     command -v node >/dev/null 2>&1 || packages+=(node)
     command -v npm >/dev/null 2>&1 || packages+=(node)
     command -v python3 >/dev/null 2>&1 || packages+=(python)

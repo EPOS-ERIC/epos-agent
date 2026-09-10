@@ -14,7 +14,7 @@ The installer checks for these requirements:
 - Python **3.11 or newer**
 - Git, npm and rsync
 
-If dependencies are missing, `install.sh` asks for permission and installs them using Homebrew on macOS or the available package manager on Linux (`apt`, `dnf` or `pacman`). For unattended installation, use `EPOS_AUTO_INSTALL=1`.
+If dependencies are missing, `install.sh` asks for permission and installs Homebrew if needed, then Node.js/Python/Git/rsync on macOS. On Linux it uses the available package manager (`apt`, `dnf` or `pacman`). For unattended installation, use `EPOS_AUTO_INSTALL=1`.
 
 From the repository directory:
 
