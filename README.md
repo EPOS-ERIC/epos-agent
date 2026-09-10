@@ -8,11 +8,13 @@ EPOS Agent is a terminal UI assistant for discovering and using EPOS Platform so
 
 ## Quick start (macOS/Linux)
 
-Requirements:
+The installer checks for these requirements:
 
 - Node.js **22.19.0 or newer**
 - Python **3.11 or newer**
-- Git and npm
+- Git, npm and rsync
+
+If dependencies are missing, `install.sh` asks for permission and installs them using Homebrew on macOS or the available package manager on Linux (`apt`, `dnf` or `pacman`). For unattended installation, use `EPOS_AUTO_INSTALL=1`.
 
 From the repository directory:
 
