@@ -237,7 +237,10 @@ const executeTool = defineTool({
     bbox: Type.Optional(Type.String()),
     serviceParameters: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Advertised service parameter name/value map, encoded into EPOS params JSON" })),
     strictValidation: Type.Optional(Type.Boolean({ description: "Validate names, required params, enums and readOnly defaults before execution (default true)" })),
-    maxBytes: Type.Optional(Type.Number({ description: "Maximum response bytes returned to model (default 50000)" })),
+    maxBytes: Type.Optional(Type.Number({ description: "Maximum preview bytes returned to model (default 50000)" })),
+    estimateOnly: Type.Optional(Type.Boolean({ description: "Estimate response size without downloading data" })),
+    allowLargeDownload: Type.Optional(Type.Boolean({ description: "Proceed after user confirmation when the response exceeds 50 MB; hard limit is 1 GB" })),
+    outputFileName: Type.Optional(Type.String({ description: "Optional filename for saving the downloaded response inside the EPOS workspace" })),
   }),
   async execute(_id, params: any, signal) {
     const strict = params.strictValidation !== false;
@@ -262,7 +265,13 @@ const executeTool = defineTool({
     }
     const q: any = { useDefaults: !!params.useDefaults || undefined, format: params.format, inputFormat: params.inputFormat, pluginId: params.pluginId, startDate: params.startDate, endDate: params.endDate, bbox: params.bbox };
     if (Object.keys(provided).length) q.params = JSON.stringify(provided);
-    const execution = await eposMcpCall("execute_service", { instance_id: params.resourceId, ...q });
+    const execution = await eposMcpCall("execute_service", { instance_id: params.resourceId, ...q, estimate_only: params.estimateOnly, allowLargeDownload: params.allowLargeDownload, outputFileName: params.outputFileName });
+    if (execution.estimate) {
+      const record = { action: "estimate-service", timestamp: now(), resourceId: params.resourceId, endpoint: execution.estimate.endpoint, parameters: { ...q, params: provided }, status: execution.estimate.status, contentType: execution.estimate.contentType, bytes: execution.estimate.contentLength };
+      const provenanceFile = await logProvenance(record);
+      const result = { provenance: { ...record, provenanceFile }, estimate: execution.estimate, estimateAvailable: execution.estimateAvailable, note: execution.note };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
+    }
     const bytes = execution.bytes || 0;
     const maxBytes = Math.max(1000, Math.min(Number(params.maxBytes || 50000), 1000000));
     const contentType = execution.contentType || "unknown";
@@ -272,7 +281,7 @@ const executeTool = defineTool({
     const record = { action: "execute-service", timestamp: now(), resourceId: params.resourceId, resourceMetaId: meta.metaId, serviceName: meta.serviceName, provider: meta.serviceProvider?.dataProviderLegalName, endpoint: execution.endpoint, serviceEndpoint: meta.serviceEndpoint, parameters: { ...q, params: provided }, status: execution.status, contentType, bytes, truncated };
     const provenanceFile = await logProvenance(record);
     if (execution.status >= 400) throw new Error(`EPOS execute failed: HTTP ${execution.status} from ${execution.endpoint}\n${preview.slice(0, 2000)}\nProvenance: ${provenanceFile}`);
-    const result = { provenance: { ...record, provenanceFile }, dataPreview: preview, truncated };
+    const result = { provenance: { ...record, provenanceFile }, dataPreview: preview, outputFile: execution.outputFile, truncated };
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], details: result };
   },
 });

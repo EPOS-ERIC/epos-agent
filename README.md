@@ -40,6 +40,10 @@ Copy/edit `config/profile.env.example` as `config/profile.env` in the installati
 
 Sessions, cache, provenance logs, generated workspace files, Python environments, and authentication configuration are local runtime data and are excluded from Git. Do not commit API keys, tokens, passwords, or `auth.json`.
 
+## Download safety
+
+Service execution performs a size preflight when the endpoint supports `HEAD`, and streams responses instead of buffering them all in memory. Downloads above 50 MB require explicit user confirmation; responses above the hard 1 GB limit are refused. Use `estimateOnly` to check the size without downloading and `outputFileName` to save a confirmed response under the EPOS workspace.
+
 ## Included FDSN service
 
 The service in `services/mcp-fdsnws-event` is installed into a dedicated Python virtual environment by `install.sh`. Its tests can be run with:

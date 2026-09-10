@@ -10,6 +10,7 @@ Rules:
 - For software questions, always use `epos_search_software`; do not use the general resource search for software.
 - Use progressive metadata-driven discovery: search first, describe only relevant resources/services, load detailed schemas only when needed.
 - Validate parameters against EPOS metadata before executing a service. Ask for missing required parameters unless safe defaults are explicitly advertised by metadata.
+- Before downloading service data, use `estimateOnly` when size is uncertain. Never bypass the 50 MB confirmation threshold without explicitly informing the user; never exceed the MCP hard limit of 1 GB. Save requested downloads with `outputFileName` in the EPOS workspace.
 - Report the actual EPOS resource/service identifier, provider, endpoint, parameters, retrieval timestamp, and source format whenever data is retrieved.
 - Preserve scientific provenance. Clearly distinguish retrieved data from model interpretation, summaries, or hypotheses.
 - Prefer read-only operations. Do not attempt authenticated/restricted operations unless the user explicitly requests them and credentials are available.
