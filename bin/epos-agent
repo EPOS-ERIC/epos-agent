@@ -2,6 +2,43 @@
 set -euo pipefail
 ROOT="${EPOS_AGENT_ROOT:-$HOME/epos-agent}"
 PI_BIN="${PI_BIN:-$ROOT/.runtime/node_modules/.bin/pi}"
+
+setup_gemini() {
+  local profile temp_profile gemini_key
+  profile="$ROOT/config/profile.env"
+
+  [[ -t 0 && -t 1 ]] || {
+    echo "epos-agent: --setup-gemini requires an interactive terminal" >&2
+    exit 1
+  }
+
+  mkdir -p "$ROOT/config"
+  printf 'Create a Gemini API key in Google AI Studio:\nhttps://aistudio.google.com/app/apikey\n\n'
+  printf 'Paste the key (it will not be displayed): '
+  IFS= read -r -s gemini_key
+  printf '\n'
+  [[ -n "$gemini_key" ]] || {
+    echo "epos-agent: no Gemini API key was provided" >&2
+    exit 1
+  }
+
+  temp_profile="$(mktemp "$ROOT/config/profile.env.XXXXXX")"
+  if [[ -f "$profile" ]]; then
+    awk '!/^(GEMINI_API_KEY|EPOS_PROVIDER|EPOS_MODEL)=/' "$profile" > "$temp_profile"
+  fi
+  printf 'GEMINI_API_KEY=%q\nEPOS_PROVIDER=google\n' "$gemini_key" >> "$temp_profile"
+  chmod 600 "$temp_profile"
+  mv "$temp_profile" "$profile"
+  unset gemini_key
+
+  printf 'Gemini is configured for EPOS Agent. Start it normally, then use /model to choose a Gemini model.\n'
+}
+
+if [[ "${1:-}" == "--setup-gemini" ]]; then
+  setup_gemini
+  exit 0
+fi
+
 if [[ ! -x "$PI_BIN" ]]; then
   PI_BIN="$(command -v pi || true)"
 fi
@@ -14,9 +51,9 @@ if [[ -f "$ROOT/config/profile.env" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/config/profile.env"
 fi
-provider="${EPOS_PROVIDER:-${PI_PROVIDER:-${EPOS_DEFAULT_PROVIDER:-}}}"
-model="${EPOS_MODEL:-${PI_MODEL:-${EPOS_DEFAULT_MODEL:-}}}"
-thinking="${EPOS_THINKING:-${PI_REASONING_LEVEL:-${EPOS_DEFAULT_THINKING:-}}}"
+provider="${EPOS_PROVIDER:-${PI_PROVIDER:-}}"
+model="${EPOS_MODEL:-${PI_MODEL:-}}"
+thinking="${EPOS_THINKING:-${PI_REASONING_LEVEL:-}}"
 
 # Start from a clean terminal before handing control to Pi's TUI.
 if [[ -t 1 ]]; then
@@ -62,11 +99,11 @@ declare -a args=(
   --no-context-files
   --session-dir "$ROOT/sessions"
   --system-prompt "$(cat "$ROOT/prompts/SYSTEM.md")"
-  --skill "$ROOT/skills/epos"
+  --skill "$ROOT/skills"
   --extension "$ROOT/extensions/epos-tools/index.ts"
   --theme "$ROOT/themes/epos-corporate.json"
   --use-theme "epos-corporate"
-  --tools "read,grep,find,ls,write,edit,epos_search_resources,epos_search_software,epos_describe_resource,epos_describe_service,epos_execute_service,epos_run_python,epos_show_image,epos_fdsnws_event_call"
+  --tools "read,grep,find,ls,write,edit,epos_load_tools,epos_search_organizations,epos_search_resources,epos_search_software,epos_describe_resource,epos_describe_software,epos_describe_service,epos_execute_service,epos_run_python,epos_show_image,epos_fdsnws_event_call"
 )
 [[ -n "$provider" ]] && args+=(--provider "$provider")
 [[ -n "$model" ]] && args+=(--model "$model")

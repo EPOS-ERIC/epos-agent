@@ -1,6 +1,6 @@
 {
   "name": "@epos-agent/mcp-epos",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Controlled MCP server for the public EPOS API Gateway",
   "type": "module",
@@ -8,7 +8,7 @@
     "start": "node src/server.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^3.25.76"
   }
 }
