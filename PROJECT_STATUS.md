@@ -37,7 +37,7 @@ I requisiti espressi all'inizio del progetto e durante la definizione della v0.2
 12. Conservare il dataset completo nel workspace e mostrare in chat solo una sintesi e pochi esempi.
 13. Rispettare un limite numerico soltanto quando viene richiesto esplicitamente dall'utente.
 14. Dichiarare chiaramente i download incompleti e conservarli come file parziali, senza presentarli come dataset completi.
-15. Mantenere la conferma oltre 50 MB e il limite assoluto di 1 GB.
+15. Usare una sola conferma per il piano di download e un limite cumulativo di 1 GiB per studio.
 16. Registrare metriche sui token senza salvare prompt o dati scientifici nel log di utilizzo.
 17. Rendere l'accesso ai servizi EPOS più guidato e rassicurante per utenti non esperti.
 18. Introdurre workflow semplici: trova dati, descrivi servizio, scarica dati, genera codice, crea grafico, crea notebook e mostra provenance.
@@ -49,7 +49,7 @@ I requisiti espressi all'inizio del progetto e durante la definizione della v0.2
 24. Creare eventuali test, fixture e script di verifica solo in directory temporanee ed eliminarli al termine.
 25. Integrare nell'MCP la skill `epos-api` ricevuta, adattandone il contratto OpenAPI, la ricerca delle organizzazioni, il supporto OGC e gli strumenti di ispezione/visualizzazione all'architettura model-agnostic esistente.
 26. Rendere trasparente ogni fase mostrando azione corrente, fonte, parametri, stato e prossimo passo senza esporre dettagli tecnici non necessari.
-27. Presentare tutte le alternative disponibili in modo incrementale: prima le più rilevanti, poi le successive soltanto su richiesta, dichiarando sempre che esistono altre opzioni.
+27. Esaminare tutte le alternative disponibili e presentare in chat soltanto i titoli rilevanti raggruppati per funzione scientifica.
 28. Applicare il workflow ricerca → download → pre-analisi → codice/visualizzazione e mantenere il ricercatore in controllo delle transizioni.
 29. Fare domande mirate per completare i dettagli scientifici e operativi mancanti prima di scegliere o interrogare un servizio.
 30. Fornire prima del download un preventivo dichiaratamente stimato di record e dimensione, quando tecnicamente disponibile.
@@ -66,21 +66,21 @@ I requisiti espressi all'inizio del progetto e durante la definizione della v0.2
 | Reset dei tool a ogni nuovo turno | Completato | Il turno successivo riparte dal set minimo. |
 | Avvio lazy dei server MCP | Completato | EPOS e FDSN partono alla prima chiamata effettiva. |
 | Contratti MCP tipizzati e `structuredContent` | Completato | Il server EPOS espone sette tool MCP v0.2. |
-| Paginazione compatta del catalogo | Completato | Cinque schede per pagina di default; non limita i dati scientifici. |
-| Download EPOS completo nel workspace | Completato | La chat riceve percorso, dimensione, formato, anteprima e provenance. |
-| Download FDSN multipagina | Completato | Senza limite esplicito vengono percorse tutte le pagine. |
+| Ricerca completa e sintesi compatta del catalogo | Completato | L'adapter percorre tutte le pagine; la chat raggruppa i soli titoli rilevanti. |
+| Download EPOS nel bundle dello studio | Completato | Trasporto e completezza scientifica sono distinti; la chat riceve percorso, dimensione, formato, anteprima e provenance. |
+| Download FDSN completo | Completato | Senza limite esplicito usa partizioni temporali, deduplicazione e verifica degli estremi. |
 | File FDSN parziali in caso di errore | Completato | Il suffisso `.partial.jsonl` indica un dataset incompleto. |
-| Protezioni 50 MB e 1 GB | Completato | Conferma esplicita oltre 50 MB, rifiuto oltre 1 GB. |
+| Conferma unica e budget di 1 GiB | Completato | Un piano complessivo viene confermato una volta; non esiste più la soglia separata di 50 MB. |
 | Telemetria provider-neutral | Completato | Token, cache e costo sono registrati senza prompt o dati scientifici. |
-| Workflow guidati per utenti non esperti | Parziale | La ricerca ora guida scelta e raffinamento; restano da strutturare download, pre-analisi e produzione degli output. |
-| Stato conversazionale sintetico | Completato | Lo stato operativo compatto è persistente per sessione e branch, aggiornato dai tool e reinserito nel prompt senza dati scientifici raw. |
-| Bundle riproducibile per ogni download | Parziale | Dataset e provenance esistono, ma non sono ancora raccolti con script e README. |
-| Generazione automatica di codice/notebook | Da fare | È possibile eseguire Python, ma il codice riproducibile non viene sempre generato. |
-| Tool e skill specifici per i plot | Da fare | Sono disponibili Python e visualizzazione immagini, non template scientifici deterministici. |
+| Workflow guidati per utenti non esperti | Completato | Stato e istruzioni seguono contesto, domanda, servizi, conferma, visualizzazione e codice/notebook. |
+| Stato conversazionale sintetico | Completato | Lo stato v2 conserva studio, fase, piano, budget e artefatti ed è compatibile con lo stato v1. |
+| Bundle riproducibile per studio | Completato | Ogni studio raccoglie dati, figure, provenance, parametri, script, notebook, manifest e README. |
+| Generazione automatica di codice/notebook | Completato | Il bundle contiene `analysis.py` e un notebook che lo importa. |
+| Skill deterministica per i plot | Completato | La selezione è basata su formato e struttura dei dati, senza località o layer hardcoded. |
 | Integrazione della skill `epos-api` nell'MCP | Parziale | OpenAPI locale, ricerca organizzazioni e search token-efficient sono integrate; mancano metadata adiacenti, fetch controllato, inspect, visualize e workflow OGC. |
 | Trasparenza delle operazioni | Parziale | Provenance e stato sono disponibili, ma manca una comunicazione uniforme prima e dopo ogni fase. |
-| Opzioni incrementali | Completato | Il catalogo mostra tutti i risultati della pagina corrente, massimo cinque, dichiara quelli rimanenti e recupera altre pagine soltanto su richiesta. |
-| Domande di raffinamento | Completato | Dopo la ricerca il modello pone da una a tre domande soltanto sui dettagli mancanti e propone i passi successivi. |
+| Alternative del catalogo | Completato | Tutte le pagine sono analizzate internamente; la chat mostra titoli raggruppati per ruolo scientifico. |
+| Domande di raffinamento | Completato | Il workflow usa un solo blocco iniziale di massimo tre domande; richiede coordinate solo per luoghi ambigui. |
 | Preventivo record/dimensione | Parziale | EPOS usa il preflight dimensionale quando disponibile; manca una strategia uniforme e una stima preventiva FDSN. |
 | Pre-analisi e valutazione preliminare | Da fare | Non esiste ancora una fase standard per struttura, completezza, valori mancanti e anomalie evidenti. |
 | Modalità demo | Da fare | Non esiste ancora un comando o stato dedicato alla demo. |
@@ -126,7 +126,7 @@ Il modello deve supportare il tool calling; un modello esclusivamente testuale n
 2. Pi espone soltanto nome, descrizione e percorso delle skill; il modello legge il corpo della skill pertinente quando serve.
 3. Il modello interpreta la richiesta dell'utente.
 4. Se servono altre capacità, il modello chiama autonomamente `epos_load_tools`.
-5. Il router abilita uno o più gruppi: ricerca catalogo, ricerca software, descrizione, download, sismologia, analisi o workspace.
+5. Il router abilita uno o più gruppi: workflow, ricerca catalogo, ricerca software, descrizione, download, sismologia, analisi o workspace.
 6. Pi usa il deferred loading nativo quando il modello lo supporta; altrimenti aggiorna normalmente la lista dei tool.
 7. Il relativo server MCP viene avviato solo alla prima chiamata.
 8. Il tool salva i dati completi nel workspace e restituisce al modello un risultato compatto.
@@ -134,7 +134,7 @@ Il modello deve supportare il tool calling; un modello esclusivamente testuale n
 
 ### Ricerca e descrizione EPOS
 
-`search_organizations` risolve un nome di provider in ID EPOS con filtro, deduplicazione, ranking locale e paginazione massima di cinque candidati. `search_resources` conserva il dominio durante il flattening dell'albero, deduplica per ID, applica localmente `scienceDomains` e ordina per pertinenza lessicale prima della paginazione. `search_resources` e `search_software` presentano al massimo cinque schede per pagina; l'agente mostra tutte le schede ricevute e recupera la pagina seguente soltanto su richiesta.
+`search_organizations` risolve un nome di provider in ID EPOS con filtro, deduplicazione, ranking locale e paginazione massima di cinque candidati. `search_resources` conserva il dominio durante il flattening dell'albero, deduplica per ID, applica localmente `scienceDomains` e ordina per pertinenza lessicale. L'estensione percorre automaticamente tutte le pagine di `search_resources` e `search_software`; l'agente mostra soltanto i titoli rilevanti raggruppati per ruolo scientifico.
 
 Le istruzioni sono separate in `epos-search`, `epos-service-access` ed `epos-fdsn-earthquakes`. Pi mantiene nel prompt iniziale soltanto le loro descrizioni e carica il corpo pertinente su richiesta del modello.
 
@@ -146,19 +146,20 @@ Dopo la selezione, `describe_resource`, `describe_software` e `describe_service`
 
 1. recupera e valida i parametri dichiarati dal servizio;
 2. esegue un preflight dimensionale quando disponibile;
-3. richiede conferma oltre 50 MB e rifiuta risposte oltre 1 GB;
-4. trasmette l'intera risposta direttamente in un file nel workspace;
+3. applica il budget residuo del limite cumulativo di 1 GiB dello studio;
+4. trasmette l'intera risposta direttamente nella directory `data/` del bundle;
 5. genera un nome `epos-<resource>-<timestamp>.<estensione>` se non viene indicato;
 6. restituisce in chat soltanto stato, dimensione, formato, percorso, breve anteprima e provenance.
 
-L'anteprima può essere abbreviata; il file dichiarato completo non viene troncato.
+L'anteprima può essere abbreviata. Una risposta HTTP scaricata integralmente viene distinta da un dataset scientificamente completo; quando quest'ultimo non è verificabile viene dichiarato esplicitamente.
 
 ### Download FDSN
 
 Per `fdsn_query_earthquakes`:
 
 - un `limit` esplicito viene rispettato;
-- senza `limit`, il wrapper percorre automaticamente tutte le pagine;
+- senza `limit`, il wrapper divide adattivamente l'intervallo temporale finché ogni partizione resta sotto il tetto del provider;
+- gli eventi sono deduplicati per datacenter e `EventID` e gli estremi più vecchio/più recente sono verificati;
 - tutti gli eventi vengono scritti in `fdsn-events-<datacenter>-<timestamp>.jsonl`;
 - la chat riceve il conteggio totale e al massimo cinque eventi di esempio;
 - un errore dopo una o più pagine produce un file `.partial.jsonl` e `complete: false`.
@@ -175,12 +176,12 @@ L'installazione predefinita usa `/Users/alessandrocrocetta/epos-agent/`:
 ├── sessions/              cronologia delle sessioni Pi
 ├── logs/provenance/       provenance delle operazioni
 ├── logs/token-usage.jsonl metriche di utilizzo
-├── workspace/             dataset e output completi
+├── workspace/             bundle autocontenuti degli studi e output precedenti
 ├── config/pi-agent/       configurazione Pi
 └── services/              server MCP installati
 ```
 
-Non esiste ancora una cache persistente personalizzata delle risposte EPOS. I tool attivi sono mantenuti in memoria e vengono resettati a ogni nuovo turno. La cronologia della conversazione rimane nelle sessioni Pi, mentre i grandi dataset vengono salvati nel workspace e non inseriti integralmente nella chat.
+I nuovi studi vengono salvati in `workspace/<studio>-<timestamp>/`; `/workspace` mostra bundle attivo e artefatti recenti. I file precedenti nella radice della workspace non vengono spostati. Non esiste ancora una cache persistente personalizzata delle risposte EPOS. I tool attivi sono mantenuti in memoria e vengono resettati a ogni nuovo turno.
 
 ## Risultati di verifica disponibili
 
@@ -202,40 +203,9 @@ Le percentuali sui token sono stime offline basate sulla dimensione del contesto
 
 ## Lavoro ancora da fare
 
-### 2. Workflow guidati
+### 2. Workflow guidati — completato
 
-Implementare un flusso esplicito e riutilizzabile articolato in quattro fasi:
-
-```text
-ricerca e scelta dei dati
-  → download con preventivo e conferma
-  → pre-analisi e prima valutazione
-  → codice riproducibile e/o visualizzazione
-```
-
-Il comportamento di ogni fase deve essere:
-
-1. spiegare brevemente cosa verrà fatto e perché;
-2. raccogliere con domande mirate soltanto le informazioni mancanti;
-3. mostrare tutti i risultati della pagina corrente, fino a cinque, con il numero totale disponibile;
-4. indicare che esistono altre opzioni e attendere la richiesta dell'utente prima di espanderle;
-5. mostrare il prossimo passo possibile senza prendere decisioni scientifiche al posto del ricercatore;
-6. conservare nello stato sintetico le scelte già confermate, evitando di richiederle nuovamente.
-
-Le operazioni supportate dal workflow devono includere:
-
-- trova dati;
-- descrivi e seleziona il servizio;
-- raccogli e valida i parametri mancanti;
-- stima record, dimensione e formato, distinguendo valori certi e stimati;
-- conferma il download quando necessario;
-- scarica i dati;
-- esegui una pre-analisi di struttura, completezza, valori mancanti e anomalie evidenti;
-- mostra provenance;
-- genera codice o notebook;
-- crea un grafico preliminare.
-
-Il primo workflow verticale consigliato è “terremoti in Italia/Mediterraneo → preventivo → dataset completo → pre-analisi → provenance → script Python e/o visualizzazione”.
+Il flusso generale è: scheda del contesto → domanda scientifica → servizi e piano → conferma unica e download → visualizzazione → script e notebook. Lo stato v2 registra fase, piano, budget e artefatti. La raccolta dei dettagli mancanti avviene in un solo blocco iniziale; località e coordinate vengono ricavate dai metadata disponibili quando non sono ambigue.
 
 ### 3. Integrazione della skill `epos-api` nell'MCP
 
@@ -258,24 +228,27 @@ Attività da implementare:
 
 La parte search, organizzazioni e progressive skill è disponibile. L'attività resta parziale per metadata adiacenti, fetch controllato, inspect, visualize, OGC e allineamento completo degli altri contratti MCP.
 
-### 4. Bundle riproducibili
+### 4. Bundle riproducibili — completato
 
-Dopo ogni download creare una directory autocontenuta:
+Ogni nuovo studio crea una directory autocontenuta:
 
 ```text
-workspace/earthquakes-<timestamp>/
-├── data.jsonl
+workspace/<studio>-<timestamp>/
+├── data/
+├── figures/
 ├── provenance.json
 ├── parameters.json
 ├── analysis.py
+├── <studio>.ipynb
+├── manifest.json
 └── README.md
 ```
 
-Il codice deve essere leggibile e revisionabile, e deve permettere di ripetere download e analisi.
+Il notebook importa `analysis.py`; `/workspace` mostra il bundle attivo e i file recenti.
 
-### 5. Plot scientifici deterministici
+### 5. Plot scientifici deterministici — completato nella skill
 
-Creare una skill e tool dedicati, senza dipendere dalla generazione libera di codice per i casi comuni:
+La skill seleziona grafici da formato, campi, geometrie e domanda scientifica senza centri, layer o località hardcoded. Sono coperti i casi comuni:
 
 - mappa degli epicentri;
 - serie temporale degli eventi;
@@ -284,7 +257,7 @@ Creare una skill e tool dedicati, senza dipendere dalla generazione libera di co
 - grafici vulcanologici;
 - sovrapposizione su layer geografici.
 
-Ogni grafico deve salvare immagine, script, parametri e riferimenti al dataset sorgente.
+Ogni grafico viene salvato nel bundle insieme a script, parametri e riferimenti al dataset sorgente.
 
 ### 6. Modalità demo
 
@@ -298,7 +271,7 @@ Introdurre una modalità che:
 
 Preparare almeno uno scenario stabile sui terremoti e successivamente il caso Etna con download, layer cartografico, script e grafico.
 
-### 7. Researcher-in-the-loop
+### 7. Researcher-in-the-loop — completato
 
 Rendere sistematico il messaggio che l'agente:
 
@@ -307,7 +280,7 @@ Rendere sistematico il messaggio che l'agente:
 - non certifica automaticamente la qualità scientifica del dataset;
 - non sostituisce interpretazione, validazione e decisioni del ricercatore.
 
-### 8. Template compatti di risposta
+### 8. Template compatti di risposta — completato nelle istruzioni
 
 Definire risposte coerenti per ricerca, selezione, pre-download, download completato, dataset parziale e grafico generato. Ogni risposta dovrebbe mostrare soltanto risultato, parametri essenziali, stato di completezza e prossimo passo.
 
@@ -321,12 +294,9 @@ Definire risposte coerenti per ricerca, selezione, pre-download, download comple
 
 ## Ordine di implementazione consigliato
 
-1. Workflow guidato e trasparente per terremoti, comprese domande di raffinamento e opzioni incrementali.
-2. Integrazione della skill `epos-api` nel server MCP esistente.
-3. Preventivo dati e pre-analisi standardizzata.
-4. Bundle riproducibile automatico.
-5. Skill e tool per plot deterministici.
-6. Modalità demo e caso Etna.
-7. Test live multi-provider e misurazione token reale.
+1. Completare fetch controllato, ispezione e workflow OGC dell'integrazione `epos-api`.
+2. Rafforzare la pre-analisi standardizzata per formati non tabellari.
+3. Introdurre la modalità demo senza regole specifiche per una località.
+4. Eseguire test live multi-provider e misurazione token reale quando richiesto.
 
 Questa sequenza permette di riutilizzare quanto già costruito senza aumentare nuovamente il contesto e senza introdurre tool isolati privi di uno stato operativo comune.

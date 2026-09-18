@@ -136,14 +136,15 @@ e partono solo alla loro prima chiamata. Le due ottimizzazioni sono indipendenti
 **`epos-search`** stabilisce il comportamento di discovery. Impone query
 catalografiche inglesi, brevi e precise, preservando nomi propri, date, bounding
 box e filtri confermati. Se il provider è nominato, la prima operazione deve
-essere la risoluzione dell'organizzazione. La pagina corrente ha massimo cinque
-schede e va mostrata integralmente; la pagina seguente si recupera solo su
-richiesta. Dopo un risultato vuoto è consentito un solo tentativo più ampio.
+essere la risoluzione dell'organizzazione. L'estensione attraversa internamente
+tutte le pagine e presenta soltanto i titoli utili raggruppati per funzione
+scientifica. Dopo un risultato vuoto è consentito un solo tentativo più ampio.
 
 **`epos-service-access`** entra in gioco solo dopo la selezione. Chiede di
 ispezionare metadata e parametri normalizzati prima dell'esecuzione, di non
-inventare parametri e di dichiarare separatamente stime e valori certi. Il
-download oltre 50 MB richiede conferma esplicita; oltre 1 GB viene rifiutato.
+inventare parametri e di dichiarare separatamente stime e valori certi. Il piano
+complessivo richiede una sola conferma e dispone di un budget cumulativo di
+1 GiB per studio.
 
 **`epos-fdsn-earthquakes`** è isolata perché la ricerca eventi non è una ricerca
 nel catalogo EPOS. Stabilisce filtri FDSN, datacenter e identità opaca degli
@@ -332,13 +333,14 @@ scelta del ricercatore l'agente può usare:
 contro quelli dichiarati dal servizio e costruisce la richiesta gateway. Esegue
 un `HEAD` di preflight quando disponibile per stimare content type e dimensione.
 
-- oltre 50 MB: l'utente deve aver confermato (`allowLargeDownload`);
-- oltre 1 GB: rifiuto assoluto;
+- il piano complessivo richiede una sola conferma prima dei download;
+- ogni studio ha un limite cumulativo di 1 GiB;
 - se il server non fornisce una dimensione, il limite è controllato anche durante
   lo streaming;
 - l'intera risposta viene scritta in `workspace/`, mentre la chat riceve solo
   percorso, byte, tipo, stato, anteprima limitata e provenance;
-- un errore nello streaming chiude e rimuove il file incompleto EPOS.
+- un errore nello streaming conserva il file con suffisso `.partial` e ne
+  dichiara esplicitamente la completezza non verificata o parziale.
 
 Il nome di default è derivato da ID risorsa, timestamp ed estensione coerente
 con content type/formato. Un `outputFileName` esplicito deve essere un semplice
@@ -353,11 +355,13 @@ rifiuta parametri non supportati o alias in conflitto.
 Per `fdsn_query_earthquakes`:
 
 1. se l'utente ha dato `limit`, invia esattamente quella richiesta;
-2. senza `limit`, interroga pagine da 1.000 eventi seguendo `next_offset`;
-3. converte righe/colonne del server in JSONL e scrive ogni record;
+2. senza `limit`, divide adattivamente l'intervallo temporale quando una
+   risposta raggiunge il limite del provider;
+3. converte righe/colonne del server in JSONL e deduplica per datacenter ed
+   `EventID`;
 4. conserva soltanto cinque esempi per la chat;
 5. registra contatore, numero pagine, byte, datacenter, endpoint e filtri;
-6. oltre 50 MB richiede conferma; oltre 1 GB interrompe;
+6. rispetta il budget residuo del limite cumulativo di 1 GiB dello studio;
 7. dopo un errore con record già acquisiti rinomina il file in `.partial.jsonl`,
    registra `complete: false` e segnala un errore strutturato.
 

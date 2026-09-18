@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!requirements.txt
+!tools/
+!tools/**
+!deploy/
+!deploy/epos-mcp.env.example

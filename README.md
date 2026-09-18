@@ -23,7 +23,7 @@ From the repository directory:
 ~/epos-agent/bin/epos-agent
 ```
 
-The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, installs the bundled EPOS API MCP under `services/mcp-epos`, creates an isolated Python environment for the bundled FDSN MCP, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
+The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, installs the bundled EPOS API MCP under `services/mcpEpos`, creates an isolated Python environment for the bundled FDSN MCP, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
 
 To test another installation location without touching an existing installation:
 
@@ -40,7 +40,11 @@ Copy/edit `config/profile.env.example` as `config/profile.env`, set `EPOS_PROVID
 
 Each user turn starts with only file reading and the internal `epos_load_tools` router. The model calls the router automatically to activate only the required capability, including separate EPOS catalogue and software search groups. MCP processes also start only on their first real call.
 
-Catalogue results contain at most five compact service cards per page. The agent shows every card retrieved on that page with title, provider, EPOS ID and a concise interpretive relevance reason, then waits for the researcher to choose or request more options. This pagination affects only alternatives shown to the model: it never limits records in a requested scientific dataset. Tool outputs follow the [MCP tool contract](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and use `structuredContent`, while raw catalogue facets and redundant linked-entity payloads stay out of the model context.
+The catalogue adapter traverses all result pages internally, deduplicates candidates and gives the model compact metadata for ranking. Chat shows only relevant service or dataset titles grouped by scientific role; technical IDs remain in state and provenance. Catalogue discovery never limits records in a requested scientific dataset. Tool outputs follow the [MCP tool contract](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and use `structuredContent`, while raw catalogue facets and redundant linked-entity payloads stay out of the model context.
+
+## Guided study workflow
+
+New studies follow a provider-neutral workflow: context card, scientific question, service plan, one download confirmation, preliminary visualization, Python script and Jupyter notebook. Missing essentials are collected in one compact question block. Each study is stored as a self-contained bundle under `~/epos-agent/workspace/<study>-<timestamp>/`; use `/workspace` to see the active bundle and recent artifacts.
 
 ## Security and runtime data
 
@@ -48,11 +52,11 @@ Sessions, cache, provenance logs, generated workspace files, Python environments
 
 ## Download safety
 
-Service execution performs a size preflight when the endpoint supports `HEAD`, streams the complete response to the workspace and returns only a short preview to chat. Downloads above 50 MB require explicit user confirmation; responses above the hard 1 GB limit are refused. Use `estimateOnly` to check the size without downloading; filenames are generated automatically unless `outputFileName` is provided.
+Service execution performs a size preflight when the endpoint supports `HEAD`, includes known and unknown sizes in one combined plan, and waits for one researcher confirmation. The cumulative raw-data budget is 1 GiB per study; there is no separate 50 MB threshold. Responses are streamed into the study bundle and chat receives only a short preview. Transport completeness and scientific dataset completeness are reported separately.
 
 ## Included FDSN service
 
-The service in `services/mcp-fdsnws-event` is installed into a dedicated Python virtual environment by `install.sh`. An explicit event `limit` is respected exactly. Without one, EPOS Agent follows every page and writes all matching events to `workspace/fdsn-events-<datacenter>-<timestamp>.jsonl`; chat receives the total and at most five samples. An interrupted multi-page request is retained only as a clearly marked `.partial.jsonl` file.
+The service in `services/mcp-fdsnws-event` is installed into a dedicated Python virtual environment by `install.sh`. An explicit event `limit` is respected exactly. Without one, EPOS Agent adaptively partitions the requested time interval until every shard is below the provider result cap, deduplicates event IDs and verifies the oldest/newest boundaries before declaring the JSONL complete. Interrupted or unverifiable requests are retained as clearly marked `.partial.jsonl` files; chat receives the total and at most five samples.
 
 Its existing tests can be run with:
 

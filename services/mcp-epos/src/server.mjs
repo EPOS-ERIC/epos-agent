@@ -1,12 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { mkdir, open, unlink } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { basename, extname, isAbsolute, join, resolve, sep } from "node:path";
 
 const API_BASE = (process.env.EPOS_API_BASE || "https://www.ics-c.epos-eu.org/api/v1").replace(/\/$/, "");
 const WORKSPACE = process.env.EPOS_WORKSPACE || join(process.env.EPOS_AGENT_ROOT || process.cwd(), "workspace");
-const DEFAULT_DOWNLOAD_LIMIT = 50 * 1024 * 1024;
 const ABSOLUTE_DOWNLOAD_LIMIT = 1024 * 1024 * 1024;
 const DEFAULT_PREVIEW_BYTES = 4000;
 const MAX_PREVIEW_BYTES = 12000;
@@ -27,11 +26,9 @@ const provenanceShape = {
 };
 
 class EposApiError extends Error {
-  constructor(message, { code = "EPOS_API_ERROR", endpoint, status } = {}) {
+  constructor(message, details = {}) {
     super(message);
-    this.code = code;
-    this.endpoint = endpoint;
-    this.status = status;
+    Object.assign(this, { code: "EPOS_API_ERROR", ...details });
   }
 }
 
@@ -80,6 +77,12 @@ function errorResult(error) {
     message: error instanceof Error ? error.message : String(error),
     status: error?.status,
     endpoint: error?.endpoint,
+    outputFile: error?.outputFile,
+    bytes: error?.bytes,
+    complete: error?.complete,
+    datasetCompleteness: error?.datasetCompleteness,
+    pageCount: error?.pageCount,
+    coverage: error?.coverage,
   };
   return { content: [{ type: "text", text: JSON.stringify(payload) }], isError: true };
 }
@@ -263,6 +266,8 @@ function normalizedParameter(parameter) {
   return {
     name: parameter.name,
     label: parameter.label,
+    description: compactText(parameter.description ?? parameter.valueDescription, 400),
+    type: parameter.type ?? parameter.valueType,
     required: Boolean(parameter.required),
     readOnly: String(parameter.readOnlyValue ?? parameter.readOnly) === "true",
     default: parameter.defaultValue ?? parameter.default,
@@ -341,6 +346,23 @@ function generatedFileName(resourceId, contentType, format) {
   const safeId = resourceId.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32) || "resource";
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   return `epos-${safeId}-${timestamp}${extensionFor(contentType, format)}`;
+}
+
+function outputDirectoryPath(outputDirectory) {
+  if (!outputDirectory) return WORKSPACE;
+  if (isAbsolute(outputDirectory)) {
+    throw new EposApiError("outputDirectory must be relative to the EPOS workspace.", { code: "INVALID_OUTPUT_DIRECTORY" });
+  }
+  const target = resolve(WORKSPACE, outputDirectory);
+  if (target !== WORKSPACE && !target.startsWith(WORKSPACE + sep)) {
+    throw new EposApiError("outputDirectory must remain inside the EPOS workspace.", { code: "INVALID_OUTPUT_DIRECTORY" });
+  }
+  return target;
+}
+
+function partialFileName(filePath) {
+  const extension = extname(filePath);
+  return extension ? `${filePath.slice(0, -extension.length)}.partial${extension}` : `${filePath}.partial`;
 }
 
 function isTextual(contentType) {
@@ -551,8 +573,9 @@ server.registerTool("describe_service", {
       resourceId: z.string(), metaId: z.string().optional(), title: z.string().optional(),
       name: z.string().optional(), description: z.string().optional(), provider: z.array(z.string()),
       endpoint: z.string().optional(), documentation: z.string().optional(), formats: z.array(z.string()),
+      spatialCoverage: z.string().optional(), temporalCoverage: z.string().optional(),
       parameters: z.array(z.object({
-        name: z.string(), label: z.string().optional(), required: z.boolean(), readOnly: z.boolean(),
+        name: z.string(), label: z.string().optional(), description: z.string().optional(), type: z.unknown().optional(), required: z.boolean(), readOnly: z.boolean(),
         default: z.unknown().optional(), enum: z.array(z.unknown()).optional(), pattern: z.string().optional(),
       })),
     }),
@@ -573,6 +596,8 @@ server.registerTool("describe_service", {
       endpoint: metadata.serviceEndpoint ?? metadata.endpoint,
       documentation: compactText(metadata.serviceDocumentation, 500),
       formats: formats(metadata),
+      spatialCoverage: compactText(metadata.spatial ?? metadata.serviceSpatial, 500),
+      temporalCoverage: compactText(metadata.temporalCoverage ?? metadata.serviceTemporalCoverage, 500),
       parameters: (metadata.serviceParameters || []).map(normalizedParameter),
     },
     provenance: provenance(response),
@@ -580,7 +605,7 @@ server.registerTool("describe_service", {
 }));
 
 server.registerTool("execute_service", {
-  description: "Validate and execute one read-only EPOS service. The complete response is always streamed to the workspace; only a bounded preview is returned.",
+  description: "Validate and execute one read-only EPOS service. The full transport response is streamed within the remaining study budget; scientific dataset completeness is reported separately.",
   inputSchema: {
     resourceId: z.string().min(1),
     format: z.string().optional(),
@@ -594,6 +619,8 @@ server.registerTool("execute_service", {
     estimateOnly: z.boolean().optional(),
     allowLargeDownload: z.boolean().optional(),
     outputFileName: z.string().optional(),
+    outputDirectory: z.string().optional(),
+    maxDownloadBytes: z.number().int().min(0).max(ABSOLUTE_DOWNLOAD_LIMIT).optional(),
     previewBytes: z.number().int().min(0).max(MAX_PREVIEW_BYTES).optional(),
   },
   outputSchema: {
@@ -605,6 +632,13 @@ server.registerTool("execute_service", {
     endpoint: z.string().optional(), status: z.number().optional(), contentType: z.string().optional(),
     bytes: z.number().optional(), outputFile: z.string().optional(), preview: z.string().optional(),
     truncated: z.boolean().optional(), complete: z.boolean().optional(), retrievedAt: z.string().optional(),
+    transportComplete: z.boolean().optional(),
+    datasetCompleteness: z.enum(["verified", "not_verifiable", "partial"]).optional(),
+    pageCount: z.number().int().optional(),
+    coverage: z.object({
+      requestedStart: z.string().optional(), requestedEnd: z.string().optional(),
+      requestedBbox: z.string().optional(), verified: z.boolean(),
+    }).optional(),
     provenance: z.object(provenanceShape).optional(),
   },
   annotations: {
@@ -615,6 +649,7 @@ server.registerTool("execute_service", {
   },
 }, safeTool(async ({
   resourceId, serviceParameters = {}, estimateOnly, allowLargeDownload, outputFileName,
+  outputDirectory, maxDownloadBytes,
   previewBytes = DEFAULT_PREVIEW_BYTES, ...query
 }) => {
   if (outputFileName && (basename(outputFileName) !== outputFileName || outputFileName === "." || outputFileName === "..")) {
@@ -631,13 +666,14 @@ server.registerTool("execute_service", {
   const headerLength = Number(head.headers.get("content-length"));
   const contentLength = Number.isFinite(headerLength) && headerLength >= 0 ? headerLength : null;
   const contentType = head.headers.get("content-type") || "unknown";
+  const effectiveLimit = Math.min(maxDownloadBytes ?? ABSOLUTE_DOWNLOAD_LIMIT, ABSOLUTE_DOWNLOAD_LIMIT);
   const estimate = {
     endpoint: endpoint.toString(),
     status: head.status,
     contentType,
     contentLength,
-    confirmationRequired: contentLength !== null && contentLength > DEFAULT_DOWNLOAD_LIMIT,
-    absoluteLimitBytes: ABSOLUTE_DOWNLOAD_LIMIT,
+    confirmationRequired: false,
+    absoluteLimitBytes: effectiveLimit,
   };
   if (estimateOnly) return structuredResult({
     estimate,
@@ -655,14 +691,9 @@ server.registerTool("execute_service", {
       code: "PREFLIGHT_FAILED", endpoint: endpoint.toString(), status: head.status,
     });
   }
-  if (contentLength !== null && contentLength > ABSOLUTE_DOWNLOAD_LIMIT) {
-    throw new EposApiError("The estimated response exceeds the absolute 1 GB safety limit.", {
+  if (contentLength !== null && contentLength > effectiveLimit) {
+    throw new EposApiError("The estimated response exceeds the remaining study download budget.", {
       code: "DOWNLOAD_LIMIT_EXCEEDED", endpoint: endpoint.toString(), status: head.status,
-    });
-  }
-  if (contentLength !== null && contentLength > DEFAULT_DOWNLOAD_LIMIT && !allowLargeDownload) {
-    throw new EposApiError("The response exceeds 50 MB and requires explicit confirmation.", {
-      code: "DOWNLOAD_CONFIRMATION_REQUIRED", endpoint: endpoint.toString(), status: head.status,
     });
   }
 
@@ -674,49 +705,73 @@ server.registerTool("execute_service", {
   }
   const responseLength = Number(response.headers.get("content-length"));
   const totalLength = Number.isFinite(responseLength) && responseLength >= 0 ? responseLength : contentLength;
-  if (totalLength !== null && totalLength > ABSOLUTE_DOWNLOAD_LIMIT) {
-    throw new EposApiError("The response exceeds the absolute 1 GB safety limit.", {
+  if (totalLength !== null && totalLength > effectiveLimit) {
+    throw new EposApiError("The response exceeds the remaining study download budget.", {
       code: "DOWNLOAD_LIMIT_EXCEEDED", endpoint: endpoint.toString(), status: response.status,
     });
   }
 
   const finalContentType = response.headers.get("content-type") || contentType;
   const finalName = outputFileName || generatedFileName(resourceId, finalContentType, query.format);
-  const filePath = join(WORKSPACE, finalName);
+  const targetDirectory = outputDirectoryPath(outputDirectory);
+  const filePath = join(targetDirectory, finalName);
   const previewChunks = [];
   let capturedPreviewBytes = 0;
   let downloadedBytes = 0;
   let file;
   try {
-    await mkdir(WORKSPACE, { recursive: true });
+    await mkdir(targetDirectory, { recursive: true });
     file = await open(filePath, "w");
     if (!response.body) throw new EposApiError("EPOS response has no readable body.", { endpoint: endpoint.toString() });
     const reader = response.body.getReader();
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      downloadedBytes += value.byteLength;
-      if (downloadedBytes > ABSOLUTE_DOWNLOAD_LIMIT) {
-        throw new EposApiError("The streaming response exceeded the absolute 1 GB safety limit.", {
-          code: "DOWNLOAD_LIMIT_EXCEEDED", endpoint: endpoint.toString(),
-        });
+      const writableBytes = Math.min(value.byteLength, effectiveLimit - downloadedBytes);
+      const writablePart = value.slice(0, writableBytes);
+      if (writablePart.byteLength) {
+        await file.write(writablePart);
+        downloadedBytes += writablePart.byteLength;
       }
-      if (downloadedBytes > DEFAULT_DOWNLOAD_LIMIT && !allowLargeDownload) {
-        throw new EposApiError("The streaming response exceeded 50 MB and requires explicit confirmation.", {
-          code: "DOWNLOAD_CONFIRMATION_REQUIRED", endpoint: endpoint.toString(),
-        });
-      }
-      await file.write(value);
-      if (capturedPreviewBytes < previewBytes) {
-        const part = value.slice(0, Math.min(value.byteLength, previewBytes - capturedPreviewBytes));
+      if (capturedPreviewBytes < previewBytes && writablePart.byteLength) {
+        const part = writablePart.slice(0, Math.min(writablePart.byteLength, previewBytes - capturedPreviewBytes));
         previewChunks.push(part);
         capturedPreviewBytes += part.byteLength;
+      }
+      if (writableBytes < value.byteLength) {
+        throw new EposApiError("The streaming response exceeded the remaining study download budget.", {
+          code: "DOWNLOAD_LIMIT_EXCEEDED", endpoint: endpoint.toString(),
+        });
       }
     }
   } catch (error) {
     await file?.close();
     file = undefined;
-    await unlink(filePath).catch(() => {});
+    if (downloadedBytes > 0) {
+      const partialPath = partialFileName(filePath);
+      let retainedFile = partialPath;
+      await rename(filePath, partialPath).catch(async () => {
+        retainedFile = undefined;
+        await unlink(filePath).catch(() => {});
+      });
+      const failure = error instanceof EposApiError
+        ? error
+        : new EposApiError(error instanceof Error ? error.message : String(error), { endpoint: endpoint.toString() });
+      failure.outputFile = retainedFile;
+      failure.bytes = downloadedBytes;
+      failure.complete = false;
+      failure.datasetCompleteness = "partial";
+      failure.pageCount = 1;
+      failure.coverage = {
+        requestedStart: query.startDate,
+        requestedEnd: query.endDate,
+        requestedBbox: query.bbox,
+        verified: false,
+      };
+      throw failure;
+    } else {
+      await unlink(filePath).catch(() => {});
+    }
     throw error;
   } finally {
     await file?.close();
@@ -735,6 +790,15 @@ server.registerTool("execute_service", {
     preview,
     truncated: downloadedBytes > capturedPreviewBytes,
     complete: true,
+    transportComplete: true,
+    datasetCompleteness: "not_verifiable",
+    pageCount: 1,
+    coverage: {
+      requestedStart: query.startDate,
+      requestedEnd: query.endDate,
+      requestedBbox: query.bbox,
+      verified: false,
+    },
     retrievedAt,
     provenance: {
       endpoint: endpoint.toString(),

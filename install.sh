@@ -93,6 +93,7 @@ fi
 say "Copying EPOS Agent files to $INSTALL_ROOT"
 rsync -a --delete \
   --exclude='.git/' --exclude='.runtime/' --exclude='services/mcp-fdsnws-event/.venv/' \
+  --exclude='services/mcpEpos/.venv/' \
   --exclude='cache/' --exclude='logs/' --exclude='sessions/' \
   --exclude='workspace/*' --exclude='config/pi-agent/' \
   "$REPO_ROOT/" "$INSTALL_ROOT/"
@@ -105,6 +106,11 @@ npm install --prefix "$INSTALL_ROOT/.runtime" --no-fund --no-audit "$PI_PACKAGE@
 
 say "Installing EPOS API MCP"
 npm install --prefix "$INSTALL_ROOT/services/mcp-epos" --no-fund --no-audit
+
+say "Creating Python environment for EPOS MCP"
+python3 -m venv "$INSTALL_ROOT/services/mcpEpos/.venv"
+"$INSTALL_ROOT/services/mcpEpos/.venv/bin/python" -m pip install --upgrade pip >/dev/null
+"$INSTALL_ROOT/services/mcpEpos/.venv/bin/python" -m pip install -r "$INSTALL_ROOT/services/mcpEpos/requirements.txt" >/dev/null
 
 say "Creating Python environment for FDSN MCP"
 python3 -m venv "$INSTALL_ROOT/services/mcp-fdsnws-event/.venv"

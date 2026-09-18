@@ -1,0 +1,27 @@
+services:
+  epos-mcp:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      EPOS_MCP_TOKENS_JSON: ${EPOS_MCP_TOKENS_JSON:-}
+      EPOS_MCP_AUTH_TOKEN: ${EPOS_MCP_AUTH_TOKEN:-}
+      EPOS_MCP_ALLOWED_ORIGINS: ${EPOS_MCP_ALLOWED_ORIGINS:-}
+      EPOS_API_BASE: ${EPOS_API_BASE:-https://www.ics-c.epos-eu.org/api/v1}
+      EPOS_ARTIFACTS: /app/artifacts
+      EPOS_MAX_TIME_RANGE_DAYS: ${EPOS_MAX_TIME_RANGE_DAYS:-366}
+      EPOS_MAX_BBOX_AREA_DEGREES: ${EPOS_MAX_BBOX_AREA_DEGREES:-1000}
+      EPOS_STATE_TTL_SECONDS: ${EPOS_STATE_TTL_SECONDS:-1800}
+      EPOS_MAX_ARTIFACTS: ${EPOS_MAX_ARTIFACTS:-1000}
+      EPOS_PUBLIC_BASE_URL: ${EPOS_PUBLIC_BASE_URL:-}
+      EPOS_CONFIRM_TIME_RANGE_DAYS: ${EPOS_CONFIRM_TIME_RANGE_DAYS:-90}
+      EPOS_CONFIRM_BBOX_AREA_DEGREES: ${EPOS_CONFIRM_BBOX_AREA_DEGREES:-100}
+      EPOS_RATE_LIMIT_PER_MINUTE: ${EPOS_RATE_LIMIT_PER_MINUTE:-60}
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ../artifacts:/app/artifacts
+    read_only: true
+    tmpfs:
+      - /tmp
+    restart: unless-stopped

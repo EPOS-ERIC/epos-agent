@@ -1,0 +1,23 @@
+[Unit]
+Description=EPOS MCP Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=epos
+Group=epos
+WorkingDirectory=/opt/epos-skill
+EnvironmentFile=/etc/epos-mcp.env
+ExecStart=/usr/bin/python3 /opt/epos-skill/tools/epos_mcp_http.py --host 127.0.0.1 --port 8765
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# If EPOS_AUDIT_LOG_PATH is enabled, create/chown this directory for epos.
+ReadWritePaths=/opt/epos-skill/artifacts /var/log/epos-mcp
+
+[Install]
+WantedBy=multi-user.target

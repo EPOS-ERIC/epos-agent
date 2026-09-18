@@ -8,8 +8,8 @@ license: CC-BY-4.0
 
 Load `seismology` with `epos_load_tools`, then use `fdsn_query_earthquakes` for event searches and the detail operation for a selected event.
 
-Concisely ask for missing scientific filters (e.g. timeframe, region, magnitude) if the request is vague. Preserve exact time, spatial, depth, magnitude, ordering, and datacenter choices without inventing them. Pass `limit` only when the researcher explicitly requests a count; otherwise the adapter follows all pages and writes the complete result as JSONL.
+Collect missing scientific filters in the workflow's single initial question block. Preserve exact time, spatial, depth, magnitude, ordering, and datacenter choices without inventing them. Resolve a named area from authoritative metadata when possible; ask for one center or reference only if it remains ambiguous. Pass `limit` only when the researcher explicitly requests a count; otherwise the adapter partitions the requested time range, deduplicates events and verifies coverage before declaring the JSONL complete.
 
 Event identifiers are opaque and provider-specific. Copy them exactly and never reuse an identifier with a different datacenter.
 
-Report datacenter, filters, record count, examples, output path, completeness, and provenance. A `.partial.jsonl` file is incomplete and must never be presented as a complete dataset. Offer a preliminary inspection as the next step without treating it as scientific validation.
+Report datacenter, filters, record count, verified coverage, shard/page counts, examples, absolute output path, completeness, and provenance. A `.partial.jsonl` file is incomplete and must never be presented as a complete dataset. Continue to preliminary inspection and visualization after the confirmed plan without treating them as scientific validation.
