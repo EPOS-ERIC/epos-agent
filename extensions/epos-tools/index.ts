@@ -1,6 +1,6 @@
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { access, appendFile, mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { access, appendFile, copyFile, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
@@ -10,10 +10,9 @@ const ROOT = process.env.EPOS_AGENT_ROOT || `${process.env.HOME}/epos-agent`;
 const PROV_DIR = join(ROOT, "logs", "provenance");
 const TOKEN_LOG = join(ROOT, "logs", "token-usage.jsonl");
 const FDSN_CMD = join(ROOT, "services", "mcp-fdsnws-event", ".venv", "bin", "mcp-fdsnws-event-server");
-const EPOS_MCP_SERVER = join(ROOT, "services", "mcp-epos", "src", "server.mjs");
-const EPOS_MCP_NODE = process.env.EPOS_MCP_NODE || "node";
-const EPOS_NATIVE_MCP_PYTHON = join(ROOT, "services", "mcpEpos", ".venv", "bin", "python");
-const EPOS_NATIVE_MCP_SERVER = join(ROOT, "services", "mcpEpos", "tools", "epos_mcp.py");
+const EPOS_MCP_PYTHON = join(ROOT, "services", "mcp-epos", ".venv", "bin", "python");
+const EPOS_MCP_SERVER = join(ROOT, "services", "mcp-epos", "tools", "epos_mcp_stdio.py");
+const EPOS_MCP_ARTIFACTS = resolve(ROOT, "services", "mcp-epos", "artifacts");
 const WORKSPACE = resolve(ROOT, "workspace");
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const FDSN_PAGE_SIZE = 1000;
@@ -202,13 +201,46 @@ function nextConversationState(current: ConversationState, event: any): Conversa
 
   if (event.toolName === "epos_load_tools") {
     const intentByCapability: Record<string, string> = {
-      catalog_search: "find_data", software_search: "find_software", description: "describe_data",
+      catalog_search: "find_data", description: "describe_data",
       download: "download_data", seismology: "find_earthquakes", analysis: "analyze_data", workspace: "manage_workspace",
       workflow: "manage_study",
     };
     const intent = intentByCapability[input.capability];
     if (!intent) return undefined;
     return { ...current, intent, domain: input.capability === "seismology" ? "seismology" : current.domain, updatedAt: now() };
+  }
+
+  if (event.toolName === "epos_mcp_call") {
+    const tool = input.tool;
+    const args = input.arguments && typeof input.arguments === "object" ? input.arguments : {};
+    if (["epos_search", "epos_search_page", "epos_search_filter", "epos_organizations"].includes(tool)) {
+      return withArtifacts({
+        ...current,
+        intent: "find_data",
+        filters: pickStateFilters(args, ["q", "query", "startDate", "endDate", "bbox", "organisations"]),
+      });
+    }
+    if (tool === "epos_details" || tool === "epos_select_candidate") {
+      return withArtifacts({
+        ...current,
+        intent: "describe_data",
+        selectedResourceId: typeof args.distribution_id === "string" ? args.distribution_id : current.selectedResourceId,
+      });
+    }
+    if (tool === "epos_prepare_execute" || tool === "epos_execute") {
+      const downloadedBytes = tool === "epos_execute" ? Math.max(0, Number(payload.bytes) || 0) : 0;
+      return withArtifacts({
+        ...current,
+        intent: tool === "epos_execute" ? "download_data" : "prepare_download",
+        selectedResourceId: typeof args.distribution_id === "string" ? args.distribution_id : current.selectedResourceId,
+        study: current.study ? {
+          ...current.study,
+          phase: tool === "epos_execute" ? "download" : "services",
+          downloadedBytes: Math.min(current.study.budgetBytes, current.study.downloadedBytes + downloadedBytes),
+        } : undefined,
+      }, payload.outputFile);
+    }
+    return withArtifacts(current);
   }
 
   if (event.toolName === "epos_search_resources" || event.toolName === "epos_search_software") {
@@ -301,14 +333,14 @@ function resolveWorkspacePath(p: string, relativeBase = WORKSPACE) {
 }
 
 class StdioMcpClient {
-  constructor(private command: string, private args: string[] = [], private cwd = ROOT) {}
+  constructor(private command: string, private args: string[] = [], private cwd = ROOT, private env: NodeJS.ProcessEnv = {}) {}
   private proc?: ChildProcessWithoutNullStreams;
   private rl?: Interface;
   private nextId = 1;
   private pending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   async start() {
     if (this.proc && !this.proc.killed) return;
-    this.proc = spawn(this.command, this.args, { cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"] });
+    this.proc = spawn(this.command, this.args, { cwd: this.cwd, env: { ...process.env, ...this.env }, stdio: ["pipe", "pipe", "pipe"] });
     this.proc.stderr.on("data", (d) => { /* keep stderr off stdout; inspect logs/mcp-smoke.err for smoke tests */ });
     this.proc.on("error", (error) => {
       for (const pending of this.pending.values()) pending.reject(error);
@@ -347,7 +379,7 @@ class StdioMcpClient {
   async stop() { this.rl?.close(); if (this.proc && !this.proc.killed) this.proc.kill(); }
 }
 const mcp = new StdioMcpClient(FDSN_CMD, [], join(ROOT, "services", "mcp-fdsnws-event"));
-const eposMcp = new StdioMcpClient(EPOS_MCP_NODE, [EPOS_MCP_SERVER], join(ROOT, "services", "mcp-epos"));
+const eposMcp = new StdioMcpClient(EPOS_MCP_PYTHON, [EPOS_MCP_SERVER], join(ROOT, "services", "mcp-epos"), { EPOS_MCP_LOCAL_PATHS: "1" });
 async function eposMcpCall(toolName: string, args: Record<string, unknown>) {
   await eposMcp.start();
   const response = await eposMcp.request("tools/call", { name: toolName, arguments: args });
@@ -364,70 +396,6 @@ async function eposMcpCall(toolName: string, args: Record<string, unknown>) {
   return JSON.parse(text);
 }
 
-class LspStdioMcpClient {
-  private proc?: ChildProcessWithoutNullStreams;
-  private nextId = 1;
-  private pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
-  private buffer = Buffer.alloc(0);
-  constructor(private command: string, private args: string[], private cwd: string) {}
-  async start() {
-    if (this.proc && !this.proc.killed) return;
-    this.proc = spawn(this.command, this.args, { cwd: this.cwd, stdio: ["pipe", "pipe", "pipe"] });
-    this.proc.on("error", (error) => this.rejectPending(error));
-    this.proc.on("exit", () => this.rejectPending(new Error(`MCP process stopped: ${this.command}`)));
-    this.proc.stdout.on("data", (chunk: Buffer) => this.receive(chunk));
-    await this.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "epos-agent", version: "0.2.0" } });
-    this.notify("notifications/initialized", {});
-  }
-  private receive(chunk: Buffer) {
-    this.buffer = Buffer.concat([this.buffer, chunk]);
-    while (true) {
-      const separator = this.buffer.indexOf("\r\n\r\n");
-      if (separator < 0) return;
-      const header = this.buffer.subarray(0, separator).toString("utf8");
-      const match = /^content-length:\s*(\d+)\s*$/im.exec(header);
-      if (!match) { this.rejectPending(new Error("EPOS MCP sent a response without Content-Length.")); return; }
-      const contentLength = Number(match[1]);
-      const bodyStart = separator + 4;
-      if (this.buffer.length < bodyStart + contentLength) return;
-      const body = this.buffer.subarray(bodyStart, bodyStart + contentLength);
-      this.buffer = this.buffer.subarray(bodyStart + contentLength);
-      try {
-        const message = JSON.parse(body.toString("utf8"));
-        if (typeof message.id === "number" && this.pending.has(message.id)) {
-          const pending = this.pending.get(message.id)!;
-          this.pending.delete(message.id);
-          message.error ? pending.reject(new Error(JSON.stringify(message.error))) : pending.resolve(message.result);
-        }
-      } catch (error) { this.rejectPending(error instanceof Error ? error : new Error(String(error))); }
-    }
-  }
-  private rejectPending(error: Error) {
-    for (const pending of this.pending.values()) pending.reject(error);
-    this.pending.clear();
-  }
-  request(method: string, params: any) {
-    if (!this.proc || !this.proc.stdin.writable) throw new Error(`MCP process is not running: ${this.command}`);
-    const id = this.nextId++;
-    const body = JSON.stringify({ jsonrpc: "2.0", id, method, params });
-    const promise = new Promise<any>((resolve, reject) => this.pending.set(id, { resolve, reject }));
-    this.proc.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
-    return promise;
-  }
-  notify(method: string, params: any) {
-    if (!this.proc?.stdin.writable) return;
-    const body = JSON.stringify({ jsonrpc: "2.0", method, params });
-    this.proc.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
-  }
-  async stop() { if (this.proc && !this.proc.killed) this.proc.kill(); }
-}
-const nativeEposMcp = new LspStdioMcpClient(EPOS_NATIVE_MCP_PYTHON, [EPOS_NATIVE_MCP_SERVER], join(ROOT, "services", "mcpEpos"));
-async function nativeEposMcpCall(toolName: string, args: Record<string, unknown>) {
-  await nativeEposMcp.start();
-  const response = await nativeEposMcp.request("tools/call", { name: toolName, arguments: args });
-  if (response?.isError) throw new Error(response.content?.find((item: any) => item.type === "text")?.text || `EPOS MCP tool failed: ${toolName}`);
-  return response?.content?.find((item: any) => item.type === "text")?.text || `EPOS MCP returned no text for ${toolName}`;
-}
 const execFileAsync = promisify(execFile);
 function imageMime(path: string) {
   const ext = extname(path).toLowerCase();
@@ -826,13 +794,29 @@ const executeTool = defineTool({
 const nativeEposMcpTool = defineTool({
   name: "epos_mcp_call",
   label: "EPOS MCP",
-  description: "Use the bundled EPOS MCP for official EPOS catalogue searches, organization lookup, distribution metadata, service execution, artifact inspection, visualizations, and public URL fetches. Choose the MCP operation matching the request.",
+  description: "Primary source for EPOS data discovery and download. Use this bundled MCP before any other source for catalogue searches, organization lookup, distribution metadata, execution planning, service execution, artifact inspection, visualization, and public URL fetches.",
   parameters: Type.Object({
-    tool: StringEnum(["epos_search", "epos_organizations", "epos_details", "epos_execute", "epos_inspect", "epos_visualize", "epos_fetch"] as const),
+    tool: StringEnum(["epos_search", "epos_search_page", "epos_select_candidate", "epos_search_filter", "epos_organizations", "epos_details", "epos_prepare_execute", "epos_execute", "epos_inspect", "epos_visualize", "epos_fetch"] as const),
     arguments: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Arguments defined by the selected EPOS MCP operation." })),
   }),
   async execute(_id, params: any) {
-    return modelResult({ tool: params.tool, result: await nativeEposMcpCall(params.tool, params.arguments || {}) });
+    if (params.tool === "epos_execute") requireConfirmedStudy();
+    const result = await eposMcpCall(params.tool, params.arguments || {});
+    if (params.tool === "epos_execute" && typeof result?.artifact_path === "string") {
+      const source = resolve(result.artifact_path);
+      if (source !== EPOS_MCP_ARTIFACTS && !source.startsWith(EPOS_MCP_ARTIFACTS + sep)) {
+        throw new Error("EPOS MCP returned an artifact outside its local artifact directory.");
+      }
+      const info = await stat(source);
+      if (info.size > remainingStudyBudget()) throw new Error("EPOS response exceeds the remaining study download budget.");
+      const outputDirectory = activeStudyDataDirectory();
+      await mkdir(outputDirectory, { recursive: true });
+      const outputFile = join(outputDirectory, `epos-${Date.now()}${extname(source) || ".bin"}`);
+      await copyFile(source, outputFile);
+      result.outputFile = outputFile;
+      result.bytes = info.size;
+    }
+    return resultWithProvenance(`mcp-${params.tool}`, params.arguments || {}, { tool: params.tool, ...result });
   },
 });
 
@@ -1127,10 +1111,9 @@ const fdsnMcpTool = defineTool({
 const BASE_TOOLS = ["read", "epos_load_tools"];
 const TOOL_GROUPS: Record<string, string[]> = {
   workflow: ["epos_manage_study"],
-  catalog_search: ["epos_mcp_call", "epos_search_organizations", "epos_search_resources"],
-  software_search: ["epos_search_software"],
-  description: ["epos_mcp_call", "epos_describe_resource", "epos_describe_software", "epos_describe_service"],
-  download: ["epos_mcp_call", "epos_describe_service", "epos_execute_service"],
+  catalog_search: ["epos_mcp_call"],
+  description: ["epos_mcp_call"],
+  download: ["epos_mcp_call"],
   seismology: ["epos_fdsnws_event_call"],
   analysis: ["read", "epos_run_python", "epos_show_image"],
   workspace: ["read", "write", "edit", "ls", "find", "grep"],
@@ -1150,7 +1133,7 @@ function createLoadToolsTool(pi: ExtensionAPI) {
     label: "EPOS Load Tools",
     description: "Internal intent router. Call it autonomously to load only the capability required by the request; never ask the user to call it.",
     parameters: Type.Object({
-      capability: StringEnum(["workflow", "catalog_search", "software_search", "description", "download", "seismology", "analysis", "workspace"] as const),
+      capability: StringEnum(["workflow", "catalog_search", "description", "download", "seismology", "analysis", "workspace"] as const),
     }),
     async execute(_id, params: any) {
       const available = availableToolNames(pi);
@@ -1169,9 +1152,11 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setTitle("EPOS Agent");
     ctx.ui.setWorkingIndicator({ frames: ["🌍", "🌎", "🌏"], intervalMs: 180 });
     ctx.ui.setStatus("epos", "EPOS Agent");
-    ctx.ui.setStatus("epos-api-mcp", "EPOS API MCP on demand");
+    ctx.ui.setStatus("epos-api-mcp", "EPOS MCP starting");
     ctx.ui.setStatus("epos-fdsn", "FDSN MCP on demand");
     runtimeConversationState = restoreConversationState(ctx);
+    await eposMcp.start();
+    ctx.ui.setStatus("epos-api-mcp", "EPOS MCP ready");
     resetTools(pi);
   });
   pi.on("session_tree", async (_event, ctx) => { runtimeConversationState = restoreConversationState(ctx); });
@@ -1201,7 +1186,7 @@ export default function (pi: ExtensionAPI) {
     await mkdir(join(ROOT, "logs"), { recursive: true });
     await appendFile(TOKEN_LOG, JSON.stringify(record) + "\n");
   });
-  pi.on("session_shutdown", async () => { await Promise.all([mcp.stop(), eposMcp.stop(), nativeEposMcp.stop()]); });
+  pi.on("session_shutdown", async () => { await Promise.all([mcp.stop(), eposMcp.stop()]); });
   pi.on("tool_result", async (event) => {
     const nextState = nextConversationState(runtimeConversationState, event);
     if (!nextState) return;
@@ -1250,13 +1235,6 @@ export default function (pi: ExtensionAPI) {
   });
   pi.registerTool(createLoadToolsTool(pi));
   pi.registerTool(createWorkflowTool());
-  pi.registerTool(organizationSearchTool);
-  pi.registerTool(searchTool);
-  pi.registerTool(softwareSearchTool);
-  pi.registerTool(describeResourceTool);
-  pi.registerTool(describeSoftwareTool);
-  pi.registerTool(describeServiceTool);
-  pi.registerTool(executeTool);
   pi.registerTool(nativeEposMcpTool);
   pi.registerTool(runPythonTool);
   pi.registerTool(showImageTool);

@@ -92,7 +92,7 @@ def summarize_details(payload: Any) -> dict[str, Any]:
 
     formats = payload.get("availableFormats")
     available_formats = [
-        {key: entry[key] for key in ("format", "label", "inputFormat", "pluginId", "type") if key in entry}
+        {key: entry[key] for key in ("format", "label", "href", "originalFormat", "inputFormat", "pluginId", "type") if key in entry}
         for entry in formats if isinstance(entry, dict)
     ] if isinstance(formats, list) else []
 
@@ -104,7 +104,7 @@ def summarize_details(payload: Any) -> dict[str, Any]:
                     continue
                 parameters.append({
                     key: parameter[key]
-                    for key in ("name", "label", "required", "type", "defaultValue", "minValue", "maxValue", "enumValue", "multipleValue", "valuePattern")
+                    for key in ("name", "label", "required", "type", "defaultValue", "value", "readOnlyValue", "minValue", "maxValue", "enumValue", "multipleValue", "valuePattern")
                     if key in parameter
                 })
         return parameters

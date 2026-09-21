@@ -56,8 +56,9 @@ pertinenti alla domanda corrente.
 | --- | --- |
 | `bin/epos-agent` | Launcher: carica configurazione, prompt, skill ed estensione, poi avvia Pi. |
 | `prompts/SYSTEM.md` | Regole globali corte: tool minimi, selezione esplicita, sicurezza download e workspace. |
-| `extensions/epos-tools/index.ts` | Integrazione Pi: router dei tool, client MCP stdio lazy, FDSN, stato, provenance e telemetria. |
-| `services/mcp-epos/src/server.mjs` | Server MCP Node per catalogo, organizzazioni, metadata e download EPOS. |
+| `extensions/epos-tools/index.ts` | Integrazione Pi: router dei tool, client MCP stdio, FDSN, stato, provenance e telemetria. |
+| `services/mcp-epos/tools/epos_mcp_http.py` | Server MCP Python per catalogo, organizzazioni, metadata e download EPOS. |
+| `services/mcp-epos/tools/epos_mcp_stdio.py` | Entry point stdio usato localmente da EPOS Agent. |
 | `services/mcp-epos/definitions/api-spec.json` | Copia locale del contratto OpenAPI EPOS, autorevole per chi mantiene l'MCP ma non caricata nel prompt. |
 | `services/mcp-fdsnws-event/` | Server FDSN specialistico già separato dal catalogo EPOS. |
 | `skills/epos-search/SKILL.md` | Istruzioni progressive per la discovery di catalogo, provider e software. |
@@ -127,9 +128,9 @@ del turno. In pratica:
 | “Eventi M≥4 in Italia” | `epos-fdsn-earthquakes` | `seismology` |
 | “Analizza il file che ho scaricato” | Nessuna skill aggiuntiva obbligatoria | `analysis` |
 
-Questo è un caricamento progressivo, non lazy loading del codice: le skill sono
-file di istruzioni letti solo se rilevanti; i server MCP sono processi separati
-e partono solo alla loro prima chiamata. Le due ottimizzazioni sono indipendenti.
+Questo è un caricamento progressivo dei tool. Il processo `mcp-epos` viene
+inizializzato insieme alla sessione per evitare race condition e conservare gli
+ID temporanei; il server specialistico FDSN parte invece alla prima chiamata.
 
 ### 4.2 Le tre skill
 
@@ -180,24 +181,15 @@ il hook `before_agent_start` richiama `resetTools` e torna al set minimo.
 
 | Gruppo | Tool Pi attivati | Uso |
 | --- | --- | --- |
-| `catalog_search` | `epos_search_organizations`, `epos_search_resources` | Provider e risorse/distribuzioni. |
-| `software_search` | `epos_search_software` | Catalogo software. |
-| `description` | `epos_describe_resource`, `epos_describe_software`, `epos_describe_service` | Metadata di un ID scelto. |
-| `download` | `epos_describe_service`, `epos_execute_service` | Parametri, stima e download EPOS. |
+| `catalog_search` | `epos_mcp_call` | Provider e risorse/distribuzioni tramite la fonte primaria EPOS. |
+| `description` | `epos_mcp_call` | Metadata di una distribuzione scelta. |
+| `download` | `epos_mcp_call` | Preparazione ed esecuzione tramite MCP EPOS. |
 | `seismology` | `epos_fdsnws_event_call` | Eventi e dettagli FDSN. |
 | `analysis` | `read`, `epos_run_python`, `epos_show_image` | Elaborazione/immagini nel workspace. |
 | `workspace` | `read`, `write`, `edit`, `ls`, `find`, `grep` | Gestione esplicita dei file di lavoro. |
 
-I tool realmente definiti dal server MCP EPOS sono sette, tutti in
-`services/mcp-epos/src/server.mjs`:
-
-1. `search_resources`
-2. `search_organizations`
-3. `search_software`
-4. `describe_resource`
-5. `describe_software`
-6. `describe_service`
-7. `execute_service`
+Il profilo stdio completo espone undici tool, inclusi ricerca e paginazione,
+organizzazioni, dettagli, preparazione/esecuzione, ispezione e fetch controllato.
 
 L'estensione espone wrapper con prefisso `epos_` perché Pi non parla
 direttamente con il server: il wrapper avvia il processo stdio, gli invia
@@ -205,19 +197,20 @@ direttamente con il server: il wrapper avvia il processo stdio, gli invia
 aggiorna lo stato conversazionale. Il tool FDSN è invece un wrapper unico che
 smista le sei operazioni supportate dal suo MCP.
 
-## 6. Avvio lazy dei server MCP
+## 6. Ciclo di vita dei server MCP
 
 `StdioMcpClient` incapsula un processo figlio JSON-RPC su stdin/stdout. Ci sono
 due istanze:
 
-- EPOS: `node services/mcp-epos/src/server.mjs`;
+- EPOS: `services/mcp-epos/.venv/bin/python services/mcp-epos/tools/epos_mcp_stdio.py`;
 - FDSN: il binario del virtual environment in
   `services/mcp-fdsnws-event/.venv/bin/`.
 
-Nessun server parte all'avvio dell'interfaccia. `eposMcpCall` avvia MCP EPOS
-alla prima chiamata e poi riusa il processo; lo stesso vale per FDSN. Durante
-l'inizializzazione viene negoziata la versione MCP `2025-11-25`. Gli errori del
-processo liberano le richieste pendenti invece di lasciare promesse sospese.
+L'hook `session_start` avvia e inizializza MCP EPOS prima che l'agente accetti
+richieste. La stessa istanza viene riusata per l'intera sessione; FDSN resta
+lazy. Durante l'inizializzazione viene negoziata la versione MCP `2025-11-25`.
+Gli errori del processo liberano le richieste pendenti invece di lasciare
+promesse sospese.
 
 Questa scelta riduce tempo e consumo per conversazioni che terminano prima di
 un accesso dati e consente di lanciare EPOS Agent anche se una capability non
@@ -435,9 +428,9 @@ config/profile.env.example
 docs/implementation-plan.md
 extensions/epos-tools/index.ts
 prompts/SYSTEM.md
-services/mcp-epos/package.json
-services/mcp-epos/package-lock.json
-services/mcp-epos/src/server.mjs
+services/mcp-epos/requirements.txt
+services/mcp-epos/tools/epos_mcp_http.py
+services/mcp-epos/tools/epos_mcp_stdio.py
 skills/epos/SKILL.md                  (eliminato)
 PROJECT_STATUS.md                     (nuovo)
 services/mcp-epos/definitions/        (nuova)
@@ -490,8 +483,8 @@ Le verifiche fatte per l'intervento search sono intenzionalmente minime:
 - validazione JSON e confronto SHA-256 della copia OpenAPI con il file fornito;
 - `git diff --check`;
 - discovery nativa Pi: tre skill, nessuna diagnostica, descrizioni senza body;
-- smoke test stdio MCP: sette tool registrati, incluso `search_organizations`,
-  con `structuredContent`;
+- smoke test stdio MCP: protocollo `2025-11-25` e undici tool registrati con
+  `structuredContent`;
 - due query live: “earthquake catalogue” e risoluzione “INGV” seguita da ricerca
   tramite ID selezionato.
 
@@ -525,7 +518,7 @@ attuato è non trasferirla tutta al modello.
 Per una modifica alla conversazione, iniziare da `prompts/SYSTEM.md` e dalla
 skill più specifica. Per una modifica alla disponibilità dei tool, guardare
 `TOOL_GROUPS` e `createLoadToolsTool` nell'estensione. Per cambiare endpoint,
-schema o trasformazione EPOS, modificare `services/mcp-epos/src/server.mjs` e
+schema o trasformazione EPOS, modificare `services/mcp-epos/tools/epos_mcp_http.py` e
 confrontare l'OpenAPI locale. Per cambiare il ciclo di avvio o l'isolamento del
 contesto, intervenire nel launcher.
 

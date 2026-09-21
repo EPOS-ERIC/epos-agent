@@ -103,7 +103,7 @@ declare -a args=(
   --extension "$ROOT/extensions/epos-tools/index.ts"
   --theme "$ROOT/themes/epos-corporate.json"
   --use-theme "epos-corporate"
-  --tools "read,grep,find,ls,write,edit,epos_load_tools,epos_manage_study,epos_mcp_call,epos_search_organizations,epos_search_resources,epos_search_software,epos_describe_resource,epos_describe_software,epos_describe_service,epos_execute_service,epos_run_python,epos_show_image,epos_fdsnws_event_call"
+  --tools "read,grep,find,ls,write,edit,epos_load_tools,epos_manage_study,epos_mcp_call,epos_run_python,epos_show_image,epos_fdsnws_event_call"
 )
 [[ -n "$provider" ]] && args+=(--provider "$provider")
 [[ -n "$model" ]] && args+=(--model "$model")

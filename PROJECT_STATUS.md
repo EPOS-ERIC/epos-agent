@@ -64,10 +64,11 @@ I requisiti espressi all'inizio del progetto e durante la definizione della v0.2
 | Supporto provider/modello indipendente | Completato | Nessun default OpenAI o GPT-5.5; è richiesto il tool calling. |
 | Caricamento automatico dei tool | Completato | `epos_load_tools` abilita gruppi di capacità su richiesta del modello. |
 | Reset dei tool a ogni nuovo turno | Completato | Il turno successivo riparte dal set minimo. |
-| Avvio lazy dei server MCP | Completato | EPOS e FDSN partono alla prima chiamata effettiva. |
-| Contratti MCP tipizzati e `structuredContent` | Completato | Il server EPOS espone sette tool MCP v0.2. |
+| Avvio dei server MCP | Completato | `mcp-epos` viene inizializzato all'avvio della sessione per evitare race condition e mantenere validi gli ID temporanei; FDSN resta lazy. |
+| Contratti MCP tipizzati e `structuredContent` | Completato | Il nuovo `mcp-epos` usa l'SDK MCP ufficiale e output strutturati. |
+| Esecuzione servizi tramite `mcp-epos` | Completato | Routing standard/OGC, parametri speciali, alias di formato, conversioni `inputFormat`/`pluginId`, redirect OGC e risposte 204 sono gestiti dai metadata e verificati live. |
 | Ricerca completa e sintesi compatta del catalogo | Completato | L'adapter percorre tutte le pagine; la chat raggruppa i soli titoli rilevanti. |
-| Download EPOS nel bundle dello studio | Completato | Trasporto e completezza scientifica sono distinti; la chat riceve percorso, dimensione, formato, anteprima e provenance. |
+| Download EPOS nel bundle dello studio | Completato | Gli artefatti locali vengono copiati nel bundle e rispettano il budget; le risposte provider 204 sono dichiarate senza creare file vuoti. |
 | Download FDSN completo | Completato | Senza limite esplicito usa partizioni temporali, deduplicazione e verifica degli estremi. |
 | File FDSN parziali in caso di errore | Completato | Il suffisso `.partial.jsonl` indica un dataset incompleto. |
 | Conferma unica e budget di 1 GiB | Completato | Un piano complessivo viene confermato una volta; non esiste più la soglia separata di 50 MB. |
@@ -103,7 +104,7 @@ estensione epos-tools — routing, sicurezza, provenance e workspace
 
 - `bin/epos-agent` avvia Pi con il prompt, tre skill EPOS progressive e l'estensione EPOS.
 - `extensions/epos-tools/index.ts` registra i tool visibili al modello, gestisce il caricamento dinamico, i download FDSN, la provenance e la telemetria.
-- `services/mcp-epos/src/server.mjs` traduce le API EPOS in contratti MCP compatti e tipizzati.
+- `services/mcp-epos/tools/epos_mcp_http.py` implementa ricerca, metadata ed esecuzione EPOS; `epos_mcp_stdio.py` espone la stessa istanza all'agente.
 - `services/mcp-fdsnws-event` fornisce l'accesso specialistico ai datacenter FDSN.
 - `workspace/` contiene dataset completi, script, immagini e altri output prodotti per l'utente.
 
@@ -128,30 +129,29 @@ Il modello deve supportare il tool calling; un modello esclusivamente testuale n
 4. Se servono altre capacità, il modello chiama autonomamente `epos_load_tools`.
 5. Il router abilita uno o più gruppi: workflow, ricerca catalogo, ricerca software, descrizione, download, sismologia, analisi o workspace.
 6. Pi usa il deferred loading nativo quando il modello lo supporta; altrimenti aggiorna normalmente la lista dei tool.
-7. Il relativo server MCP viene avviato solo alla prima chiamata.
+7. `mcp-epos`, già inizializzato all'avvio della sessione, riceve la chiamata; il server FDSN viene invece avviato alla prima richiesta sismologica.
 8. Il tool salva i dati completi nel workspace e restituisce al modello un risultato compatto.
 9. Al turno utente successivo la lista dei tool viene riportata al set minimo.
 
 ### Ricerca e descrizione EPOS
 
-`search_organizations` risolve un nome di provider in ID EPOS con filtro, deduplicazione, ranking locale e paginazione massima di cinque candidati. `search_resources` conserva il dominio durante il flattening dell'albero, deduplica per ID, applica localmente `scienceDomains` e ordina per pertinenza lessicale. L'estensione percorre automaticamente tutte le pagine di `search_resources` e `search_software`; l'agente mostra soltanto i titoli rilevanti raggruppati per ruolo scientifico.
+`epos_organizations` risolve i provider; `epos_search` interroga il catalogo, conserva lato server la ricerca completa e restituisce candidati compatti ordinati. Le pagine successive e i filtri usano lo stesso `search_id`, mantenuto valido dall'unica istanza MCP della sessione.
 
-Le istruzioni sono separate in `epos-search`, `epos-service-access` ed `epos-fdsn-earthquakes`. Pi mantiene nel prompt iniziale soltanto le loro descrizioni e carica il corpo pertinente su richiesta del modello.
+Il prompt impone `mcp-epos` come prima fonte per dati e metadata EPOS; la skill FDSN resta disponibile per il percorso sismologico specialistico.
 
-Dopo la selezione, `describe_resource`, `describe_software` e `describe_service` caricano soltanto i dettagli dell'elemento scelto. I parametri del servizio vengono normalizzati e la richiesta ridondante `linkedentities` non viene eseguita.
+Dopo la selezione, `epos_details` carica i metadata compatti della distribuzione scelta. `epos_prepare_execute` valida separatamente parametri e formato prima dell'esecuzione.
 
 ### Download EPOS
 
-`execute_service`:
+Il percorso previsto è `epos_prepare_execute` → conferma del piano → `epos_execute`:
 
 1. recupera e valida i parametri dichiarati dal servizio;
-2. esegue un preflight dimensionale quando disponibile;
+2. richiede la conferma prevista dal workflow;
 3. applica il budget residuo del limite cumulativo di 1 GiB dello studio;
-4. trasmette l'intera risposta direttamente nella directory `data/` del bundle;
-5. genera un nome `epos-<resource>-<timestamp>.<estensione>` se non viene indicato;
-6. restituisce in chat soltanto stato, dimensione, formato, percorso, breve anteprima e provenance.
+4. copia l'artefatto locale nella directory `data/` del bundle;
+5. restituisce al modello risultato compatto e provenance.
 
-L'anteprima può essere abbreviata. Una risposta HTTP scaricata integralmente viene distinta da un dataset scientificamente completo; quando quest'ultimo non è verificabile viene dichiarato esplicitamente.
+Il percorso è verificato sui casi standard, OGC, conversione e risposta senza contenuto documentati. Il risultato distingue esplicitamente risposta HTTP completa, evidenze di paginazione e completezza scientifica, senza dedurre copertura europea o globale.
 
 ### Download FDSN
 
@@ -187,21 +187,25 @@ I nuovi studi vengono salvati in `workspace/<studio>-<timestamp>/`; `/workspace`
 
 - Riduzione stimata del contesto iniziale: circa 69,9%, da 8.331 a 2.506 caratteri tra prompt e schemi EPOS.
 - Benchmark offline rappresentativo aggregato: circa 92,5% di riduzione.
-- Smoke test MCP EPOS: sette tool, schemi di input/output e `structuredContent` validi, compreso `search_organizations`.
+- Suite del nuovo `mcp-epos`: 10 test su 10 superati. Handshake stdio verificato con protocollo MCP `2025-11-25` e 11 tool; ricerca live `earthquake` verificata con 52 candidati totali e 12 restituiti nella prima pagina.
+- `epos_execute` verificato live sui quattro esempi: WMS GetCapabilities via redirect pubblico validato (4.149.142 byte), GeoJSON vulcanologico (21.681 byte), conversione StationXML→EPOS GeoJSON (19.524 byte) e risposta episode `204 No Content` dichiarata senza artefatto vuoto.
 - Discovery Pi verificata con tre skill e nessuna diagnostica; il blocco iniziale delle skill misura 1.497 caratteri e non contiene i corpi completi.
 - Search live verificata con `earthquake catalogue`: otto risultati, cinque schede e cataloghi ESHM20 nelle prime posizioni.
 - Risoluzione provider live verificata con INGV: organizzazione ufficiale al primo posto e successiva ricerca limitata al relativo ID.
-- Download EPOS verificato byte per byte con risposta completa nel workspace.
 - Paginazione FDSN verificata temporaneamente con 1.003 eventi su due pagine.
 - Limite FDSN esplicito verificato con sette eventi su una sola chiamata.
 - Errore intermedio verificato con 1.000 eventi conservati in `.partial.jsonl`.
 - Router, reset per turno, launcher senza provider predefinito e telemetria sono stati verificati.
 - Stato conversazionale verificato con harness temporaneo per aggiornamento, ripristino, reset e conservazione dopo errore.
-- Gli artefatti temporanei di test sono stati eliminati; non sono stati aggiunti test, fixture o snapshot al repository.
+- Gli artefatti temporanei di test sono stati eliminati; il test unitario MCP esistente copre ora anche OGC, formati convertiti, parametri speciali e risposte senza contenuto.
 
 Le percentuali sui token sono stime offline basate sulla dimensione del contesto, non misure definitive di fatturazione su provider reali. La suite FDSN completa basata su Docker non è stata eseguita perché l'accesso al daemon Docker non è stato autorizzato; sono stati eseguiti parsing Python e smoke test MCP reale.
 
 ## Lavoro ancora da fare
+
+### 1. Correggere `epos_execute` — completato
+
+Il planner usa ora `availableFormats[].href`, `format`, `inputFormat`, `pluginId`, tipo di formato e `serviceParameters` per costruire le richieste. Distingue `/execute` da `/ogcexecute`, gestisce i parametri OGC diretti, i default read-only, i valori opzionali vuoti, i redirect pubblici validati e `204 No Content`.
 
 ### 2. Workflow guidati — completato
 
@@ -214,7 +218,7 @@ Il file originale `SKILL.md` e la specifica OpenAPI sono stati ricevuti. La part
 Attività da implementare:
 
 1. **Completato:** aggiunto `definitions/api-spec.json` come contratto autorevole.
-2. **Parziale:** `search_resources` è stato verificato e adattato; restano da allineare completamente `describe_resource`, `describe_service` ed `execute_service`.
+2. **Completato per l'esecuzione:** dettagli e formati alimentano `epos_prepare_execute`; `epos_execute` è allineato ai percorsi standard, convertiti e OGC verificati live.
 3. **Completato:** aggiunto un tool compatto per `GET /resources/organizations`, con filtro e ranking locale.
 4. Supportare `/resources/organizations/full` soltanto su richiesta esplicita, perché può restituire l'intera collezione e molti metadata.
 5. Salvare per ogni risposta scaricata un file metadata adiacente con URL sorgente, stato HTTP, content type, header rilevanti e timestamp.

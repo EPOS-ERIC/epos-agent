@@ -10,6 +10,12 @@ Authenticated Streamable HTTP MCP server for EPOS search and data execution, usi
 .venv/bin/python -m unittest discover -s tests -v
 ```
 
+EPOS Agent uses the same server through the official stdio transport and starts it during session initialization:
+
+```bash
+.venv/bin/python tools/epos_mcp_stdio.py
+```
+
 The local default binds to loopback. The MCP endpoint is `/mcp`; authenticated artifacts are `/artifacts/{artifact_id}`.
 
 ## Authorization
@@ -31,6 +37,8 @@ Searches and plans belong to the token identity and exact MCP session where avai
 By default `EPOS_MCP_TOOL_PROFILE=compact` exposes seven tools suitable for smaller LM Studio contexts. Its `epos_search` accepts only documented EPOS search fields: `q`, `startDate`, `endDate`, `bbox`, and `organisations`; it returns five ranked candidates. Set `EPOS_MCP_TOOL_PROFILE=full` to expose the extended API search fields, cached-search navigation tools, and `epos_fetch`.
 
 `epos_prepare_execute` validates formats, enum values, numeric ranges, safe patterns, and basic numeric/boolean/date types, returning structured reasons. It returns `requires_confirmation` for ranges exceeding `EPOS_CONFIRM_TIME_RANGE_DAYS` (90) or bboxes exceeding `EPOS_CONFIRM_BBOX_AREA_DEGREES` (100). Run `epos_execute(plan_id, confirm=true)` only after confirmation when required.
+
+Execution is derived from distribution metadata. Converted formats automatically carry their declared `inputFormat` and `pluginId`; OGC formats use `/ogcexecute/{id}` with declared parameters as direct query values. Validated public OGC redirects are followed once. A provider `204` is returned as `no_data: true` and does not create an empty artifact.
 
 All SDK tool calls provide native structured content plus a concise fallback. `epos_fetch` only accepts public HTTP/S destinations and does not follow redirects.
 

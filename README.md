@@ -23,7 +23,7 @@ From the repository directory:
 ~/epos-agent/bin/epos-agent
 ```
 
-The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, installs the bundled EPOS API MCP under `services/mcpEpos`, creates an isolated Python environment for the bundled FDSN MCP, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
+The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, creates isolated Python environments for the bundled EPOS MCP under `services/mcp-epos` and the FDSN MCP, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
 
 To test another installation location without touching an existing installation:
 
@@ -38,7 +38,7 @@ Copy/edit `config/profile.env.example` as `config/profile.env`, set `EPOS_PROVID
 
 ## Token-efficient tools
 
-Each user turn starts with only file reading and the internal `epos_load_tools` router. The model calls the router automatically to activate only the required capability, including separate EPOS catalogue and software search groups. MCP processes also start only on their first real call.
+Each user turn starts with only file reading and the internal `epos_load_tools` router. The model calls the router automatically to activate only the required capability. The EPOS MCP is initialized when the agent session starts and is the primary source for EPOS discovery, metadata and downloads; the specialist FDSN MCP remains on demand.
 
 The catalogue adapter traverses all result pages internally, deduplicates candidates and gives the model compact metadata for ranking. Chat shows only relevant service or dataset titles grouped by scientific role; technical IDs remain in state and provenance. Catalogue discovery never limits records in a requested scientific dataset. Tool outputs follow the [MCP tool contract](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and use `structuredContent`, while raw catalogue facets and redundant linked-entity payloads stay out of the model context.
 

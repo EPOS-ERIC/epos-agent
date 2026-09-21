@@ -132,14 +132,17 @@ async def http_get(url: str, timeout: int = 60) -> dict[str, Any]:
                 body += chunk
                 if len(body) > MAX_RESPONSE_BYTES: return {"ok":False,"status":response.status_code,"error":"Response exceeds the 50 MiB limit."}
             if response.is_error: return {"ok":False,"status":response.status_code,"error":body.decode(errors="replace")[:2000]}
-            return {"ok":True,"status":response.status_code,"ct":response.headers.get("content-type", "application/octet-stream").split(";",1)[0],"body":body,"text":body.decode(response.encoding or "utf-8",errors="replace"),"bytes":len(body)}
+            pagination_headers={key.lower():value for key,value in response.headers.items() if key.lower() in {"link","content-range","x-total-count","x-page","x-current-page","x-total-pages","x-next-page","x-per-page"}}
+            return {"ok":True,"status":response.status_code,"location":response.headers.get("location", ""),"pagination_headers":pagination_headers,"ct":response.headers.get("content-type", "application/octet-stream").split(";",1)[0],"body":body,"text":body.decode(response.encoding or "utf-8",errors="replace"),"bytes":len(body)}
     except httpx.HTTPError as exc: return {"ok":False,"status":0,"error":str(exc)}
 
 def save(prefix: str, data: bytes, content_type: str) -> dict[str, str]:
     cleanup_artifacts(); suffix = ".geojson" if "geo+json" in content_type else ".json" if "json" in content_type else ".xml" if "xml" in content_type else ".csv" if "csv" in content_type else ".bin"
     path = ARTIFACTS / f"{prefix}-{uuid.uuid4().hex}{suffix}"; path.write_bytes(data); path.with_suffix(path.suffix+".meta.json").write_text(json.dumps({"content_type":content_type}), encoding="utf-8")
     artifact_id = STATE.put("artifact", {"path":str(path.resolve()), "content_type":content_type}); cleanup_artifacts(); relative=f"/artifacts/{artifact_id}"
-    return {"artifact_id":artifact_id, "download_url":PUBLIC_BASE_URL+relative} if PUBLIC_BASE_URL else {"artifact_id":artifact_id,"artifact_url":relative}
+    artifact = {"artifact_id":artifact_id, "download_url":PUBLIC_BASE_URL+relative} if PUBLIC_BASE_URL else {"artifact_id":artifact_id,"artifact_url":relative}
+    if os.environ.get("EPOS_MCP_LOCAL_PATHS") == "1": artifact["artifact_path"] = str(path.resolve())
+    return artifact
 def artifact_file(identifier: Any) -> tuple[Path,str] | None:
     item=STATE.get(identifier,"artifact",session_required=False)
     if not item:return None
@@ -226,6 +229,7 @@ def bbox_area(value:Any)->float|None:
     try:w,s,e,n=map(float,value.split(",") if isinstance(value,str) else value); return (e-w)*(n-s) if -180<=w<=e<=180 and -90<=s<=n<=90 else None
     except (TypeError,ValueError):return None
 def validate_value(name:str,value:Any,d:dict[str,Any])->str|None:
+    if value in (None, "") and d.get("required") not in (True,"true",1):return None
     enum=d.get("enumValue"); values=enum if isinstance(enum,list) else str(enum).split(",") if enum else []
     if values and str(value) not in map(str,values):return f"{name} is not an allowed enum value"
     kind=str(d.get("type","")).casefold()
@@ -235,13 +239,49 @@ def validate_value(name:str,value:Any,d:dict[str,Any])->str|None:
         if "minValue" in d and number<float(d["minValue"]):return f"{name} is below minValue"
         if "maxValue" in d and number>float(d["maxValue"]):return f"{name} is above maxValue"
     if kind in {"boolean","bool"} and not isinstance(value,bool) and str(value).casefold() not in {"true","false","0","1"}:return f"{name} must be boolean"
-    if "date" in kind and parse_date(value) is None:return f"{name} must be an ISO date"
+    if "date" in kind:return None if parse_date(value) is not None else f"{name} must be an ISO date"
     pattern=d.get("valuePattern")
     if isinstance(pattern,str) and len(pattern)<200:
         try:
             if not re.fullmatch(pattern,str(value)):return f"{name} does not match valuePattern"
         except re.error:pass
     return None
+def truthy(value:Any)->bool:return value in (True,1,"1") or (isinstance(value,str) and value.casefold()=="true")
+def completeness_fields(response:dict[str,Any],metadata_only:bool=False)->dict[str,Any]:
+    evidence=[];headers=response.get("pagination_headers") or {}
+    for key,value in headers.items():
+        if key!="link" or re.search(r'rel\s*=\s*["\']?(next|prev|first|last)',str(value),re.I):evidence.append(f"header:{key}={str(value)[:500]}")
+    if "json" in str(response.get("ct", "")):
+        try:data=json.loads(response.get("text", ""))
+        except (TypeError,json.JSONDecodeError):data=None
+        if isinstance(data,dict):
+            pagination=data.get("pagination")
+            if isinstance(pagination,dict):
+                for key in ("next","nextPage","next_page","page","totalPages","total_pages","offset","limit"):
+                    if key in pagination:evidence.append(f"body:pagination.{key}")
+            else:
+                for key in ("next","nextPage","next_page","totalPages","total_pages"):
+                    if key in data:evidence.append(f"body:{key}")
+                if "page" in data and ("totalPages" in data or "total_pages" in data):evidence.append("body:page")
+                if "offset" in data and "limit" in data:evidence.extend(("body:offset","body:limit"))
+    return {
+        "transportComplete":True,
+        "paginationDetected":bool(evidence),
+        "paginationEvidence":evidence,
+        "scientificCompleteness":"not_applicable_metadata" if metadata_only else "not_verified",
+        "completenessReason":"The response is service metadata, not a scientific dataset." if metadata_only else "The full HTTP response was received, but provider-wide dataset coverage was not independently verified.",
+    }
+def execution_option(metadata:dict[str,Any], requested_format:str)->tuple[dict[str,Any]|None,list[str]]:
+    options=summarize_details(metadata)["available_formats"]
+    formats=[str(option.get("format")) for option in options if option.get("format")]
+    requested=requested_format.casefold()
+    for option in options:
+        query=urllib.parse.parse_qs(urllib.parse.urlparse(str(option.get("href", ""))).query)
+        aliases={str(option.get(key, "")).casefold() for key in ("format","label","originalFormat")}
+        aliases.update(value.casefold() for value in query.get("format", []))
+        if requested and requested in aliases:return option,formats
+    if requested:return None,formats
+    return (options[0],formats) if len(options)==1 else (None,formats)
 async def tool_prepare(args:dict[str,Any])->dict[str,Any]:
     try: params=json.loads(args.get("params") or "{}")
     except json.JSONDecodeError:return error("params must be JSON.")
@@ -251,30 +291,53 @@ async def tool_prepare(args:dict[str,Any])->dict[str,Any]:
     try:metadata=json.loads(response["text"])
     except json.JSONDecodeError:return error("Distribution details were not JSON.")
     known={x["name"]:x for x in declared_parameters(metadata)}; resolved=dict(params)
+    option,formats=execution_option(metadata,str(args.get("format", "")))
+    option_query=urllib.parse.parse_qs(urllib.parse.urlparse(str((option or {}).get("href", ""))).query)
+    execution_path="ogcexecute" if "/ogcexecute/" in str((option or {}).get("href", "")) else "execute"
+    request_name=str(resolved.get("request", "")).casefold()
+    for key,d in known.items():
+        if key not in resolved and truthy(d.get("readOnlyValue")) and "defaultValue" in d:
+            if execution_path!="ogcexecute" or request_name!="getcapabilities" or key.casefold() in {"service","version","map"}:resolved[key]=d["defaultValue"]
     if str(args.get("useDefaults","")).lower()=="true":
         for key,d in known.items():
             if key not in resolved and "defaultValue" in d: resolved[key]=d["defaultValue"]
     reasons=[{"field":k,"reason":"unknown parameter"} for k in params if k not in known]
-    reasons += [{"field":k,"reason":"required parameter missing"} for k,d in known.items() if d.get("required") in (True,"true",1) and resolved.get(k) in (None,"")]
+    if execution_path!="ogcexecute" or request_name!="getcapabilities":
+        reasons += [{"field":k,"reason":"required parameter missing"} for k,d in known.items() if d.get("required") in (True,"true",1) and resolved.get(k) in (None,"")]
     reasons += [{"field":k,"reason":r} for k,v in resolved.items() if k in known and (r:=validate_value(k,v,known[k]))]
-    formats=[x.get("format") for x in summarize_details(metadata)["available_formats"] if x.get("format")]; fmt=str(args.get("format", ""))
-    if fmt and fmt not in formats:reasons.append({"field":"format","reason":"format is not available"})
+    fmt=str(args.get("format", ""))
+    if fmt and option is None:reasons.append({"field":"format","reason":"format is not available"})
+    if not fmt and option is None and len(formats)>1:reasons.append({"field":"format","reason":"select one available format"})
     start,end,bbox=args.get("startDate", ""),args.get("endDate", ""),args.get("bbox", ""); days=(parse_date(end)-parse_date(start)).total_seconds()/86400 if parse_date(start) and parse_date(end) else 0; area=bbox_area(bbox)
     if days<0 or days>MAX_TIME_RANGE_DAYS:reasons.append({"field":"date_range","reason":"invalid or exceeds maximum range"})
     if bbox and (area is None or area>MAX_BBOX_AREA_DEGREES):reasons.append({"field":"bbox","reason":"invalid or exceeds maximum area"})
     report={"reasons":reasons,"missing_required":[x["field"] for x in reasons if x["reason"]=="required parameter missing"],"unknown_params":[x["field"] for x in reasons if x["reason"]=="unknown parameter"],"resolved_params":{k:("[redacted]" if any(x in k.lower() for x in ("token","secret","password","apikey")) else v) for k,v in resolved.items()},"formats":formats}
     if reasons:return error("Execution plan was not created.",reasons)|report
     confirm=days>CONFIRM_TIME_RANGE_DAYS or (area is not None and area>CONFIRM_BBOX_AREA_DEGREES)
-    plan=STATE.put("plan",{"distribution_id":identifier,"params":resolved,"format":fmt,"startDate":start,"endDate":end,"bbox":bbox,"useDefaults":"true" if str(args.get("useDefaults","")).lower()=="true" else "","requires_confirmation":confirm})
-    return result({"plan_id":plan,"requires_confirmation":confirm,**report})
+    converted=str((option or {}).get("type", "")).casefold()=="converted" or bool((option or {}).get("pluginId") or (option or {}).get("inputFormat"))
+    planned_format=str((option or {}).get("format", "")) if converted else (option_query.get("format") or [fmt or (option or {}).get("format", "")])[0]
+    input_format=str(args.get("inputFormat") or (option_query.get("inputFormat") or [(option or {}).get("inputFormat", "")])[0])
+    plugin_id=str(args.get("pluginId") or (option_query.get("pluginId") or [(option or {}).get("pluginId", "")])[0])
+    plan_data={"distribution_id":identifier,"execution_path":execution_path,"params":resolved,"format":planned_format,"inputFormat":input_format,"pluginId":plugin_id,"startDate":start,"endDate":end,"bbox":bbox,"useDefaults":"true" if str(args.get("useDefaults","")).lower()=="true" else "","requires_confirmation":confirm}
+    plan=STATE.put("plan",plan_data)
+    return result({"plan_id":plan,"requires_confirmation":confirm,"execution":{"endpoint":execution_path,"format":planned_format,"inputFormat":input_format,"pluginId":plugin_id},**report})
 async def tool_execute(args:dict[str,Any])->dict[str,Any]:
     plan=STATE.get(args.get("plan_id"),"plan")
     if not plan:return error("plan_id is invalid, expired, or not owned by this session.")
     if plan["requires_confirmation"] and not bool(args.get("confirm",False)):return error("This plan requires confirm=true.")
-    pairs=[(k,v) for k,v in (("useDefaults",plan["useDefaults"]),("format",plan["format"]),("startDate",plan["startDate"]),("endDate",plan["endDate"]),("bbox",plan["bbox"]),("params",json.dumps(plan["params"],separators=(",",":")) if plan["params"] else "")) if v]
-    response=await http_get(f"{EPOS_API_BASE}/execute/{urllib.parse.quote(plan['distribution_id'],safe='')}?"+urllib.parse.urlencode(pairs),120)
-    if not response["ok"]:return error(f"Gateway error {response['status']}.")
-    artifact=save("execute",response["body"],response["ct"]); return result({"bytes":response["bytes"],"content_type":response["ct"],**artifact,"preview":response["text"][:4000]})
+    if plan["execution_path"]=="ogcexecute":pairs=list(plan["params"].items())
+    else:pairs=[(k,v) for k,v in (("useDefaults",plan["useDefaults"]),("format",plan["format"]),("startDate",plan["startDate"]),("endDate",plan["endDate"]),("bbox",plan["bbox"]),("pluginId",plan["pluginId"]),("inputFormat",plan["inputFormat"]),("params",json.dumps(plan["params"],separators=(",",":")) if plan["params"] else "")) if v]
+    url=f"{EPOS_API_BASE}/{plan['execution_path']}/{urllib.parse.quote(plan['distribution_id'],safe='')}"+("?"+urllib.parse.urlencode(pairs) if pairs else "")
+    response=await http_get(url,120)
+    if plan["execution_path"]=="ogcexecute" and 300<=int(response.get("status",0))<400 and response.get("location"):
+        redirect=public_http_url(urllib.parse.urljoin(url,response["location"]))
+        if not redirect:return error("EPOS OGC redirect did not resolve to a public HTTP/HTTPS URL.")
+        response=await http_get(redirect,120)
+    if not response["ok"]:return error(f"Gateway error {response['status']}: {response.get('error','unknown error')}")
+    metadata_only=plan["execution_path"]=="ogcexecute" and str(plan["params"].get("request", "")).casefold()=="getcapabilities"
+    completeness=completeness_fields(response,metadata_only)
+    if response.get("status")==204:return result({"status":204,"no_data":True,"bytes":0,"content_type":response["ct"],**completeness,"scientificCompleteness":"no_data","completenessReason":"The provider returned HTTP 204 No Content.","message":"Execution completed but the provider returned no content."})
+    artifact=save("execute",response["body"],response["ct"]); return result({"bytes":response["bytes"],"content_type":response["ct"],**artifact,**completeness,"preview":response["text"][:4000]})
 async def tool_artifact(args:dict[str,Any], visual:bool=False)->dict[str,Any]:
     record=artifact_file(args.get("artifact_id"));
     if not record:return error("artifact_id is invalid, expired, or not owned by this principal.")
@@ -312,7 +375,7 @@ def make_server(tool_profile:str|None=None)->MCPServer:
     async def discover(query:str,provider:str="",format:str="",executable_only:bool=True,limit:int=12)->dict[str,Any]:return await invoke("epos_discover",locals())
     async def details(distribution_id:str,extended:str="false")->dict[str,Any]:return await invoke("epos_details",locals())
     async def organizations(q:str="",country:str="",org_type:str="")->dict[str,Any]:return await invoke("epos_organizations",locals())
-    async def prepare(distribution_id:str,params:str="",format:str="",startDate:str="",endDate:str="",bbox:str="",useDefaults:str="")->dict[str,Any]:return await invoke("epos_prepare_execute",locals())
+    async def prepare(distribution_id:str,params:str="",format:str="",startDate:str="",endDate:str="",bbox:str="",useDefaults:str="",pluginId:str="",inputFormat:str="")->dict[str,Any]:return await invoke("epos_prepare_execute",locals())
     async def execute(plan_id:str,confirm:bool=False)->dict[str,Any]:return await invoke("epos_execute",locals())
     async def inspect(artifact_id:str)->dict[str,Any]:return await invoke("epos_inspect",locals())
     async def visualize(artifact_id:str)->dict[str,Any]:return await invoke("epos_visualize",locals())
