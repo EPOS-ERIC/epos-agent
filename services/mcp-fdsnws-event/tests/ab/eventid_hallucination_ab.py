@@ -38,14 +38,67 @@ CORRECT_EVENTID = 46166442
 # columns that matter for the follow-up question.
 QUERY_RESULT = {
     "datacenter": "INGV",
-    "columns": ["EventID", "Time", "Latitude", "Longitude", "Depth/Km",
-                "MagType", "Magnitude", "EventLocationName"],
+    "columns": [
+        "EventID",
+        "Time",
+        "Latitude",
+        "Longitude",
+        "Depth/Km",
+        "MagType",
+        "Magnitude",
+        "EventLocationName",
+    ],
     "rows": [
-        ["46166442", "2026-06-09T04:43:13.930000", "44.4908", "9.5997", "7.2", "ML", "2.5", "2 km W Tornolo (PR)"],
-        ["46167402", "2026-06-09T06:13:24.380000", "44.4973", "9.5862", "7.2", "ML", "2.4", "3 km W Tornolo (PR)"],
-        ["46165592", "2026-06-09T01:24:20.220000", "38.6887", "15.5158", "159.4", "ML", "2.2", "Tirreno Meridionale [Mare]"],
-        ["46166812", "2026-06-09T05:37:29.640000", "44.5072", "9.6028", "9.9", "ML", "2.2", "2 km W Bedonia (PR)"],
-        ["46166572", "2026-06-09T04:48:50.280000", "44.506", "9.5923", "8.3", "ML", "1.8", "3 km W Bedonia (PR)"],
+        [
+            "46166442",
+            "2026-06-09T04:43:13.930000",
+            "44.4908",
+            "9.5997",
+            "7.2",
+            "ML",
+            "2.5",
+            "2 km W Tornolo (PR)",
+        ],
+        [
+            "46167402",
+            "2026-06-09T06:13:24.380000",
+            "44.4973",
+            "9.5862",
+            "7.2",
+            "ML",
+            "2.4",
+            "3 km W Tornolo (PR)",
+        ],
+        [
+            "46165592",
+            "2026-06-09T01:24:20.220000",
+            "38.6887",
+            "15.5158",
+            "159.4",
+            "ML",
+            "2.2",
+            "Tirreno Meridionale [Mare]",
+        ],
+        [
+            "46166812",
+            "2026-06-09T05:37:29.640000",
+            "44.5072",
+            "9.6028",
+            "9.9",
+            "ML",
+            "2.2",
+            "2 km W Bedonia (PR)",
+        ],
+        [
+            "46166572",
+            "2026-06-09T04:48:50.280000",
+            "44.506",
+            "9.5923",
+            "8.3",
+            "ML",
+            "1.8",
+            "3 km W Bedonia (PR)",
+        ],
     ],
 }
 
@@ -70,7 +123,10 @@ def arrivals_tool(variant: str) -> dict:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "eventid": {"type": "integer", "description": EVENTID_DESC[variant]},
+                    "eventid": {
+                        "type": "integer",
+                        "description": EVENTID_DESC[variant],
+                    },
                     "datacenter": {"type": "string", "default": "INGV"},
                 },
                 "required": ["eventid"],
@@ -85,7 +141,10 @@ def build_messages() -> list:
             "role": "system",
             "content": "You are a seismology assistant. Use the provided tools to answer.",
         },
-        {"role": "user", "content": "Mi puoi dire i piu forti terremoti di oggi, 2026-06-09?"},
+        {
+            "role": "user",
+            "content": "Mi puoi dire i piu forti terremoti di oggi, 2026-06-09?",
+        },
         {
             "role": "assistant",
             "content": "",
@@ -127,7 +186,10 @@ def call(base_url: str, api_key: str, model: str, variant: str, temperature: flo
     }
     resp = requests.post(
         f"{base_url.rstrip('/')}/api/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json=payload,
         timeout=120,
     )
@@ -159,16 +221,21 @@ def run_variant(base_url, api_key, model, variant, repeat, temperature) -> Count
 
 def report(variant: str, seen: Counter, repeat: int) -> None:
     correct = seen.get(str(CORRECT_EVENTID), 0)
-    print(f"\n=== {variant}: {correct}/{repeat} correct ({100 * correct / repeat:.0f}%) ===")
+    print(
+        f"\n=== {variant}: {correct}/{repeat} correct ({100 * correct / repeat:.0f}%) ==="
+    )
     for value, n in seen.most_common():
         tag = "  <- correct" if value == str(CORRECT_EVENTID) else ""
         print(f"    {value}: {n}{tag}")
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--base-url", required=True, help="OpenWebUI base URL, e.g. http://host:8586")
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--base-url", required=True, help="OpenWebUI base URL, e.g. http://host:8586"
+    )
     ap.add_argument("--model", required=True, help="Model id as listed in OpenWebUI")
     ap.add_argument("--repeat", type=int, default=10)
     ap.add_argument("--temperature", type=float, default=0.7)
@@ -183,13 +250,16 @@ def main() -> int:
     # Fail fast if the model is not available on this instance.
     models_resp = requests.get(
         f"{args.base_url.rstrip('/')}/api/models",
-        headers={"Authorization": f"Bearer {api_key}"}, timeout=30,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=30,
     )
     models_resp.raise_for_status()
     available = {m.get("id") for m in models_resp.json().get("data", [])}
     if args.model not in available:
-        print(f"ERROR: model '{args.model}' not found. Available: {sorted(available)}",
-              file=sys.stderr)
+        print(
+            f"ERROR: model '{args.model}' not found. Available: {sorted(available)}",
+            file=sys.stderr,
+        )
         return 2
 
     variants = ["baseline", "fixed"] if args.variant == "both" else [args.variant]

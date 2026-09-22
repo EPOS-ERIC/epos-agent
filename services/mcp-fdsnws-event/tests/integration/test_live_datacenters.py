@@ -17,7 +17,6 @@ That retirement is itself pinned by a test at the end of this module.
 import asyncio
 
 import pytest
-
 from fdsnws_event_server.obspy_client import (
     DatacenterError,
     _extract_event_id,
@@ -59,6 +58,7 @@ def run(coro):
 
 # --- Search path, all providers --------------------------------------------
 
+
 @pytest.mark.parametrize("datacenter", PROVIDERS)
 def test_query_returns_rows(datacenter):
     cols, rows, _ = run(
@@ -81,6 +81,7 @@ def test_query_depth_column_present_whatever_its_spelling(datacenter):
 
 
 # --- Detail path, all providers --------------------------------------------
+
 
 @pytest.mark.parametrize("datacenter,eventid", KNOWN_EVENTS, ids=PROVIDERS)
 def test_get_event_by_id_returns_quakeml(datacenter, eventid):
@@ -113,6 +114,7 @@ def test_absent_event_returns_empty_catalog(datacenter, eventid):
 
 # --- Provider-specific behaviour -------------------------------------------
 
+
 def test_ingv_rejects_inverted_window_with_verbatim_message():
     """INGV is the only advertised provider that validates the time window.
 
@@ -120,10 +122,13 @@ def test_ingv_rejects_inverted_window_with_verbatim_message():
     asserted for INGV alone rather than parametrised (see the module docstring).
     """
     with pytest.raises(DatacenterError) as ei:
-        run(query_events_text(
-            starttime="2012-05-29T00:00:00", endtime="2010-01-01T00:00:00",
-            datacenter="INGV",
-        ))
+        run(
+            query_events_text(
+                starttime="2012-05-29T00:00:00",
+                endtime="2010-01-01T00:00:00",
+                datacenter="INGV",
+            )
+        )
     assert ei.value.status == 400
     assert ei.value.message  # carries the datacenter's verbatim text
 
@@ -145,10 +150,14 @@ def test_ingv_offset_changes_results():
 def test_pagination_offset_advances(datacenter):
     """A second page must not repeat the first, on every provider that pages."""
     _, page1, _ = run(
-        query_events_text(**WINDOW, minmag=4.0, limit=2, offset=1, datacenter=datacenter)
+        query_events_text(
+            **WINDOW, minmag=4.0, limit=2, offset=1, datacenter=datacenter
+        )
     )
     _, page2, _ = run(
-        query_events_text(**WINDOW, minmag=4.0, limit=2, offset=3, datacenter=datacenter)
+        query_events_text(
+            **WINDOW, minmag=4.0, limit=2, offset=3, datacenter=datacenter
+        )
     )
     if not page1 or not page2:
         pytest.skip(f"{datacenter} returned too few events to page")

@@ -4,7 +4,9 @@ from pathlib import Path
 
 from fdsnws_event_server.obspy_client import parse_fdsn_text
 
-FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "ingv_emilia_2012-05-29.txt"
+FIXTURE = (
+    Path(__file__).resolve().parents[1] / "fixtures" / "ingv_emilia_2012-05-29.txt"
+)
 
 
 def test_parse_header_and_rows():

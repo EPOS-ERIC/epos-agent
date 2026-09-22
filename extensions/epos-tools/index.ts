@@ -791,33 +791,132 @@ const executeTool = defineTool({
   },
 });
 
-const nativeEposMcpTool = defineTool({
-  name: "epos_mcp_call",
-  label: "EPOS MCP",
-  description: "Primary source for EPOS data discovery and download. Use this bundled MCP before any other source for catalogue searches, organization lookup, distribution metadata, execution planning, service execution, artifact inspection, visualization, and public URL fetches.",
-  parameters: Type.Object({
-    tool: StringEnum(["epos_search", "epos_search_page", "epos_select_candidate", "epos_search_filter", "epos_organizations", "epos_details", "epos_prepare_execute", "epos_execute", "epos_inspect", "epos_visualize", "epos_fetch"] as const),
-    arguments: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Arguments defined by the selected EPOS MCP operation." })),
-  }),
-  async execute(_id, params: any) {
-    if (params.tool === "epos_execute") requireConfirmedStudy();
-    const result = await eposMcpCall(params.tool, params.arguments || {});
-    if (params.tool === "epos_execute" && typeof result?.artifact_path === "string") {
-      const source = resolve(result.artifact_path);
-      if (source !== EPOS_MCP_ARTIFACTS && !source.startsWith(EPOS_MCP_ARTIFACTS + sep)) {
-        throw new Error("EPOS MCP returned an artifact outside its local artifact directory.");
-      }
-      const info = await stat(source);
-      if (info.size > remainingStudyBudget()) throw new Error("EPOS response exceeds the remaining study download budget.");
-      const outputDirectory = activeStudyDataDirectory();
-      await mkdir(outputDirectory, { recursive: true });
-      const outputFile = join(outputDirectory, `epos-${Date.now()}${extname(source) || ".bin"}`);
-      await copyFile(source, outputFile);
-      result.outputFile = outputFile;
-      result.bytes = info.size;
+async function executeEposProxy(toolName: string, args: any, metadataOnly: boolean = false) {
+  if (toolName === "epos_execute" || (toolName === "epos_fetch" && !metadataOnly)) requireConfirmedStudy();
+  const result = await eposMcpCall(toolName, args);
+  if (toolName === "epos_execute" && typeof result?.artifact_path === "string") {
+    const source = resolve(result.artifact_path);
+    if (source !== EPOS_MCP_ARTIFACTS && !source.startsWith(EPOS_MCP_ARTIFACTS + sep)) {
+      throw new Error("EPOS MCP returned an artifact outside its local artifact directory.");
     }
-    return resultWithProvenance(`mcp-${params.tool}`, params.arguments || {}, { tool: params.tool, ...result });
-  },
+    const info = await stat(source);
+    if (info.size > remainingStudyBudget()) throw new Error("EPOS response exceeds the remaining study download budget.");
+    const outputDirectory = activeStudyDataDirectory();
+    await mkdir(outputDirectory, { recursive: true });
+    const outputFile = join(outputDirectory, `epos-${Date.now()}${extname(source) || ".bin"}`);
+    await copyFile(source, outputFile);
+    result.outputFile = outputFile;
+    result.bytes = info.size;
+  }
+  return resultWithProvenance(`mcp-${toolName}`, args, { tool: toolName, ...result });
+}
+
+const nativeEposSearchTool = defineTool({
+  name: "epos_search",
+  label: "EPOS Search",
+  description: "Search EPOS distributions.",
+  parameters: Type.Object({
+    q: Type.Optional(Type.String({ description: "Free-text query" })),
+    keywords: Type.Optional(Type.String({ description: "Comma-separated keywords" })),
+    organisations: Type.Optional(Type.String({ description: "Organization ID" })),
+    sciencedomains: Type.Optional(Type.String({ description: "Science domain filter" })),
+    servicetypes: Type.Optional(Type.String({ description: "Service type filter (WMS, WFS, WCS)" })),
+    startDate: Type.Optional(Type.String({ description: "Start date ISO" })),
+    endDate: Type.Optional(Type.String({ description: "End date ISO" })),
+    bbox: Type.Optional(Type.String({ description: "Bounding box: west,south,east,north" })),
+    facetstype: Type.Optional(Type.String({ description: "categories, dataproviders, serviceproviders" })),
+    facets: Type.Optional(Type.String({ description: "true or false" })),
+    limit: Type.Optional(Type.Integer({ description: "Number of results per page" }))
+  }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_search", args); }
+});
+
+const nativeEposSearchPageTool = defineTool({
+  name: "epos_search_page",
+  label: "EPOS Search Page",
+  description: "Get a specific page of search results.",
+  parameters: Type.Object({
+    search_id: Type.String(), offset: Type.Optional(Type.Integer()), limit: Type.Optional(Type.Integer())
+  }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_search_page", args); }
+});
+
+const nativeEposSelectCandidateTool = defineTool({
+  name: "epos_select_candidate",
+  label: "EPOS Select Candidate",
+  description: "Mark a distribution ID as a candidate for current study requirements.",
+  parameters: Type.Object({ distribution_id: Type.String() }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_select_candidate", args); }
+});
+
+const nativeEposSearchFilterTool = defineTool({
+  name: "epos_search_filter",
+  label: "EPOS Search Filter",
+  description: "Filter search results.",
+  parameters: Type.Object({
+    search_id: Type.String(), index: Type.Integer()
+  }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_search_filter", args); }
+});
+
+const nativeEposOrganizationsTool = defineTool({
+  name: "epos_organizations",
+  label: "EPOS Organizations",
+  description: "Search EPOS organizations.",
+  parameters: Type.Object({
+    q: Type.Optional(Type.String()), country: Type.Optional(Type.String()), org_type: Type.Optional(Type.String())
+  }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_organizations", args); }
+});
+
+const nativeEposDetailsTool = defineTool({
+  name: "epos_details",
+  label: "EPOS Details",
+  description: "Get details for an EPOS distribution.",
+  parameters: Type.Object({ distribution_id: Type.String() }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_details", args); }
+});
+
+const nativeEposPrepareExecuteTool = defineTool({
+  name: "epos_prepare_execute",
+  label: "EPOS Prepare Execute",
+  description: "Prepare to execute an EPOS service.",
+  parameters: Type.Object({
+    distribution_id: Type.String(), format: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()), endDate: Type.Optional(Type.String()), bbox: Type.Optional(Type.String()), useDefaults: Type.Optional(Type.String()), pluginId: Type.Optional(Type.String()), inputFormat: Type.Optional(Type.String())
+  }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_prepare_execute", args); }
+});
+
+const nativeEposExecuteTool = defineTool({
+  name: "epos_execute",
+  label: "EPOS Execute",
+  description: "Execute an EPOS service.",
+  parameters: Type.Object({ distribution_id: Type.String(), request_payload: Type.Any() }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_execute", args); }
+});
+
+const nativeEposInspectTool = defineTool({
+  name: "epos_inspect",
+  label: "EPOS Inspect",
+  description: "Inspect EPOS service results.",
+  parameters: Type.Object({ execution_id: Type.String() }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_inspect", args); }
+});
+
+const nativeEposVisualizeTool = defineTool({
+  name: "epos_visualize",
+  label: "EPOS Visualize",
+  description: "Visualize EPOS service results.",
+  parameters: Type.Object({ execution_id: Type.String() }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_visualize", args); }
+});
+
+const nativeEposFetchTool = defineTool({
+  name: "epos_fetch",
+  label: "EPOS Fetch",
+  description: "Fetch EPOS service results.",
+  parameters: Type.Object({ url: Type.String(), metadataOnly: Type.Optional(Type.Boolean()) }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_fetch", args, args.metadataOnly); }
 });
 
 const runPythonTool = defineTool({
@@ -1111,9 +1210,9 @@ const fdsnMcpTool = defineTool({
 const BASE_TOOLS = ["read", "epos_load_tools"];
 const TOOL_GROUPS: Record<string, string[]> = {
   workflow: ["epos_manage_study"],
-  catalog_search: ["epos_mcp_call"],
-  description: ["epos_mcp_call"],
-  download: ["epos_mcp_call"],
+  catalog_search: ["epos_search", "epos_search_page", "epos_search_filter", "epos_organizations"],
+  description: ["epos_details", "epos_select_candidate", "epos_inspect", "epos_visualize"],
+  download: ["epos_prepare_execute", "epos_execute", "epos_fetch"],
   seismology: ["epos_fdsnws_event_call"],
   analysis: ["read", "epos_run_python", "epos_show_image"],
   workspace: ["read", "write", "edit", "ls", "find", "grep"],
@@ -1235,7 +1334,17 @@ export default function (pi: ExtensionAPI) {
   });
   pi.registerTool(createLoadToolsTool(pi));
   pi.registerTool(createWorkflowTool());
-  pi.registerTool(nativeEposMcpTool);
+  pi.registerTool(nativeEposSearchTool);
+  pi.registerTool(nativeEposSearchPageTool);
+  pi.registerTool(nativeEposSelectCandidateTool);
+  pi.registerTool(nativeEposSearchFilterTool);
+  pi.registerTool(nativeEposOrganizationsTool);
+  pi.registerTool(nativeEposDetailsTool);
+  pi.registerTool(nativeEposPrepareExecuteTool);
+  pi.registerTool(nativeEposExecuteTool);
+  pi.registerTool(nativeEposInspectTool);
+  pi.registerTool(nativeEposVisualizeTool);
+  pi.registerTool(nativeEposFetchTool);
   pi.registerTool(runPythonTool);
   pi.registerTool(showImageTool);
   pi.registerTool(fdsnMcpTool);

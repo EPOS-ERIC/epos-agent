@@ -14,10 +14,9 @@ import asyncio
 import json
 
 import pytest
+from fdsnws_event_server import server
 from obspy.core.event import Catalog, Event, Magnitude
 from obspy.core.event.base import ResourceIdentifier
-
-import fdsnws_event_server.server as server
 
 
 def run(coro):
@@ -48,7 +47,11 @@ NOT_FOUND_CASES = [
     ("fdsn_get_arrivals_by_id", "get_arrivals_by_id", "arrivals_count"),
     ("fdsn_get_allmagnitudes_by_id", "get_allmagnitudes_by_id", "magnitudes_count"),
     ("fdsn_get_allorigins_by_id", "get_allorigins_by_id", "origins_count"),
-    ("fdsn_get_focalmechanism_by_id", "get_focalmechanism_by_id", "focal_mechanisms_count"),
+    (
+        "fdsn_get_focalmechanism_by_id",
+        "get_focalmechanism_by_id",
+        "focal_mechanisms_count",
+    ),
 ]
 
 
@@ -82,7 +85,12 @@ def test_get_earthquake_by_id_not_found(monkeypatch):
 
 ABSENT_CASES = [
     ("fdsn_get_arrivals_by_id", "get_arrivals_by_id", "arrivals_count", "arrivals"),
-    ("fdsn_get_allmagnitudes_by_id", "get_allmagnitudes_by_id", "magnitudes_count", "magnitude"),
+    (
+        "fdsn_get_allmagnitudes_by_id",
+        "get_allmagnitudes_by_id",
+        "magnitudes_count",
+        "magnitude",
+    ),
     ("fdsn_get_allorigins_by_id", "get_allorigins_by_id", "origins_count", "origin"),
     (
         "fdsn_get_focalmechanism_by_id",
@@ -109,6 +117,7 @@ def test_found_but_absent_resource(monkeypatch, tool_name, fetch_name, count_key
 
 # --- State 2: event found with data -> no message ---------------------------
 
+
 def test_found_with_data_has_no_message(monkeypatch):
     event = make_event("46166442")
     mag = Magnitude(resource_id=ResourceIdentifier(), mag=2.5, magnitude_type="ML")
@@ -125,7 +134,7 @@ def test_found_with_data_has_no_message(monkeypatch):
 
 # --- Prevention (#1): eventid description must carry provenance + anti-invention ---
 
-from fdsnws_event_server.models import (  # noqa: E402
+from fdsnws_event_server.models import (
     GetAllMagnitudesByIdInput,
     GetAllOriginsByIdInput,
     GetArrivalsByIdInput,

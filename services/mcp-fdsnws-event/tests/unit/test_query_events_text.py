@@ -2,10 +2,9 @@
 
 import asyncio
 
+import fdsnws_event_server.obspy_client as oc
 import pytest
 import requests
-
-import fdsnws_event_server.obspy_client as oc
 from fdsnws_event_server.obspy_client import DatacenterError, query_events_text
 
 
@@ -28,10 +27,16 @@ def test_200_parses_and_builds_url(monkeypatch):
         return FakeResp(200, sample)
 
     monkeypatch.setattr(oc.requests, "get", fake_get)
-    cols, rows, api_url = run(query_events_text(
-        starttime="2020-01-01T00:00:00", endtime="2020-01-02T00:00:00",
-        limit=50, offset=5, orderby="time", datacenter="INGV",
-    ))
+    cols, rows, _api_url = run(
+        query_events_text(
+            starttime="2020-01-01T00:00:00",
+            endtime="2020-01-02T00:00:00",
+            limit=50,
+            offset=5,
+            orderby="time",
+            datacenter="INGV",
+        )
+    )
     assert cols == ["EventID", "Time", "MagType", "Magnitude"]
     assert rows == [["123", "2020-01-01T00:00:00", "ML", "3.1"]]
     for token in ("format=text", "offset=5", "orderby=time", "limit=50"):
@@ -59,7 +64,9 @@ def test_204_returns_empty(monkeypatch):
 
 def test_400_raises_with_verbatim_message(monkeypatch):
     body = 'Error 400\n\nBad Request: \n "starttime" must be before "endtime"'
-    monkeypatch.setattr(oc.requests, "get", lambda url, timeout=None: FakeResp(400, body))
+    monkeypatch.setattr(
+        oc.requests, "get", lambda url, timeout=None: FakeResp(400, body)
+    )
     with pytest.raises(DatacenterError) as ei:
         run(query_events_text(datacenter="INGV"))
     assert "must be before" in ei.value.message

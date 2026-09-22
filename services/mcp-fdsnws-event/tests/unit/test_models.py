@@ -1,9 +1,8 @@
 """Unit tests for the Pydantic input models (structural validation only)."""
 
 import pytest
-from pydantic import ValidationError
-
 from fdsnws_event_server.models import QueryEarthquakesInput
+from pydantic import ValidationError
 
 
 def test_defaults():

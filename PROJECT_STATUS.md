@@ -15,7 +15,7 @@ Il comportamento dell'agente deve tenere conto delle seguenti esigenze:
 3. **Opzioni complete ma incrementali.** Il ricercatore deve poter conoscere tutte le alternative disponibili senza riceverle tutte insieme. L'agente mostra tutti i risultati della pagina corrente, dichiara quante altre opzioni esistono e recupera le successive soltanto quando l'utente lo richiede.
 4. **Workflow riconoscibile.** Il percorso predefinito deve essere: ricerca dei dati → selezione e download → pre-analisi → codice e/o visualizzazione.
 5. **Raffinamento collaborativo.** Il modello deve fare domande mirate quando mancano dettagli utili, per esempio dominio, area, intervallo temporale, risoluzione, formato, variabili o soglie scientifiche. Non deve inventare i valori mancanti.
-6. **Preventivo prima del download.** Prima di scaricare, l'agente deve mostrare quando possibile numero stimato di record, dimensione prevista, formato, intervallo, area, servizio e provider. Deve distinguere una stima da un valore certo e segnalare quando il servizio non consente di calcolarla in anticipo.
+6. **Conferma prima dell'acquisizione.** Prima di acquisire dati scientifici, l'agente deve mostrare servizi, parametri, formati e analisi/plot scelti, senza stimare record o dimensione. Ricerca e metadata restano automatici; conteggi e byte vengono riportati soltanto dopo il trasferimento come valori misurati.
 7. **Prima valutazione dei dati.** Dopo il download, l'agente deve proporre una validazione o visualizzazione preliminare: struttura, completezza, valori mancanti, intervalli, anomalie evidenti e idoneità rispetto alla richiesta. Questa fase non equivale a una validazione scientifica definitiva.
 8. **Controllo al ricercatore.** L'agente può trovare servizi, scaricare dati e preparare una prima analisi, ma deve lasciare al ricercatore la scelta tra approfondimento descrittivo, codice riproducibile, visualizzazione o analisi successiva.
 
@@ -52,7 +52,7 @@ I requisiti espressi all'inizio del progetto e durante la definizione della v0.2
 27. Esaminare tutte le alternative disponibili e presentare in chat soltanto i titoli rilevanti raggruppati per funzione scientifica.
 28. Applicare il workflow ricerca → download → pre-analisi → codice/visualizzazione e mantenere il ricercatore in controllo delle transizioni.
 29. Fare domande mirate per completare i dettagli scientifici e operativi mancanti prima di scegliere o interrogare un servizio.
-30. Fornire prima del download un preventivo dichiaratamente stimato di record e dimensione, quando tecnicamente disponibile.
+30. Non produrre stime preventive di record o dimensione; applicare il limite cumulativo durante il trasferimento e riportare dopo l'acquisizione soltanto valori misurati.
 
 ## Stato dei requisiti
 
@@ -82,7 +82,7 @@ I requisiti espressi all'inizio del progetto e durante la definizione della v0.2
 | Trasparenza delle operazioni | Parziale | Provenance e stato sono disponibili, ma manca una comunicazione uniforme prima e dopo ogni fase. |
 | Alternative del catalogo | Completato | Tutte le pagine sono analizzate internamente; la chat mostra titoli raggruppati per ruolo scientifico. |
 | Domande di raffinamento | Completato | Il workflow usa un solo blocco iniziale di massimo tre domande; richiede coordinate solo per luoghi ambigui. |
-| Preventivo record/dimensione | Parziale | EPOS usa il preflight dimensionale quando disponibile; manca una strategia uniforme e una stima preventiva FDSN. |
+| Conferma acquisizione senza stime | Completato | Il piano mostra servizi, parametri, formati e analisi; byte e record sono riportati soltanto dopo il trasferimento. |
 | Pre-analisi e valutazione preliminare | Da fare | Non esiste ancora una fase standard per struttura, completezza, valori mancanti e anomalie evidenti. |
 | Modalità demo | Da fare | Non esiste ancora un comando o stato dedicato alla demo. |
 | Posizionamento esplicito researcher-in-the-loop | Completato | Consigli e motivazioni sono non vincolanti; descrizione ed esecuzione attendono la scelta del ricercatore salvo richiesta esplicita di selezione automatica. |

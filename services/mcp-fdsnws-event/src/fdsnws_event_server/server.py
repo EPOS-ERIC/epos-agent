@@ -3,8 +3,7 @@
 
 import json
 import logging
-from datetime import date
-from typing import Optional
+from datetime import UTC, datetime
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -21,16 +20,16 @@ from .models import (
 )
 from .obspy_client import (
     DatacenterError,
-    query_events_text,
-    get_event_by_id,
-    get_arrivals_by_id,
-    get_allmagnitudes_by_id,
-    get_allorigins_by_id,
-    get_focalmechanism_by_id,
-    event_to_full_dict,
-    obspy_to_dict,
     _extract_event_id,
     _items_with_preferred,
+    event_to_full_dict,
+    get_allmagnitudes_by_id,
+    get_allorigins_by_id,
+    get_arrivals_by_id,
+    get_event_by_id,
+    get_focalmechanism_by_id,
+    obspy_to_dict,
+    query_events_text,
 )
 
 logger = logging.getLogger(__name__)
@@ -44,9 +43,7 @@ _QUERY_ANNOTATIONS = ToolAnnotations(
     openWorldHint=True,
 )
 
-_DATACENTER_NOTE = (
-    "Available datacenters: INGV (default), EMSC, GFZ, USGS, and others supported by ObsPy."
-)
+_DATACENTER_NOTE = "Available datacenters: INGV (default), EMSC, GFZ, USGS, and others supported by ObsPy."
 
 _EVENTID_NOTE = (
     "The eventid is an opaque, provider-specific string and MUST be copied verbatim "
@@ -58,12 +55,19 @@ _EVENTID_NOTE = (
 def _error_payload(e: DatacenterError) -> str:
     """Render an upstream datacenter failure as a structured JSON error result."""
     return json.dumps(
-        {"error": True, "datacenter": e.datacenter, "api_url": e.api_url, "message": e.message},
+        {
+            "error": True,
+            "datacenter": e.datacenter,
+            "api_url": e.api_url,
+            "message": e.message,
+        },
         indent=2,
     )
 
 
-def _not_found_payload(datacenter: str, api_url: str, eventid: str, **empty_fields) -> str:
+def _not_found_payload(
+    datacenter: str, api_url: str, eventid: str, **empty_fields
+) -> str:
     """Render the 'event not found' state (empty catalog) with an actionable message.
 
     ``empty_fields`` carries the tool-specific empty result keys (e.g.
@@ -100,7 +104,7 @@ def _absent_resource_message(event_id, datacenter: str, resource: str) -> str:
         "of a single event (all origins/magnitudes, arrivals, focal mechanism) use the "
         "by-id tools.\n\n"
         "Common usage examples:\n"
-        '- Recent events (today): {} (no parameters needed)\n'
+        "- Recent events (today): {} (no parameters needed)\n"
         '- Significant events: {"minmag": 4.0, "starttime": "YYYY-MM-DDTHH:MM:SS"}\n'
         '- Geographic area: {"minlat": 41.0, "maxlat": 43.0, "minlon": 12.0, "maxlon": 15.0}\n'
         '- Radial search: {"latitude": 41.9, "longitude": 12.5, "maxradiuskm": 50}\n'
@@ -111,21 +115,21 @@ def _absent_resource_message(event_id, datacenter: str, resource: str) -> str:
     annotations=_QUERY_ANNOTATIONS,
 )
 async def fdsn_query_earthquakes(
-    starttime: Optional[str] = None,
-    endtime: Optional[str] = None,
-    updatedafter: Optional[str] = None,
-    minmag: Optional[float] = None,
-    maxmag: Optional[float] = None,
-    minlat: Optional[float] = None,
-    maxlat: Optional[float] = None,
-    minlon: Optional[float] = None,
-    maxlon: Optional[float] = None,
-    mindepth: Optional[float] = None,
-    maxdepth: Optional[float] = None,
-    latitude: Optional[float] = None,
-    longitude: Optional[float] = None,
-    minradiuskm: Optional[float] = None,
-    maxradiuskm: Optional[float] = None,
+    starttime: str | None = None,
+    endtime: str | None = None,
+    updatedafter: str | None = None,
+    minmag: float | None = None,
+    maxmag: float | None = None,
+    minlat: float | None = None,
+    maxlat: float | None = None,
+    minlon: float | None = None,
+    maxlon: float | None = None,
+    mindepth: float | None = None,
+    maxdepth: float | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    minradiuskm: float | None = None,
+    maxradiuskm: float | None = None,
     limit: int = 100,
     offset: int = 1,
     orderby: str = "time",
@@ -133,37 +137,65 @@ async def fdsn_query_earthquakes(
 ) -> str:
     try:
         params = QueryEarthquakesInput(
-            starttime=starttime, endtime=endtime, updatedafter=updatedafter,
-            minmag=minmag, maxmag=maxmag,
-            minlat=minlat, maxlat=maxlat, minlon=minlon, maxlon=maxlon,
-            mindepth=mindepth, maxdepth=maxdepth,
-            latitude=latitude, longitude=longitude,
-            minradiuskm=minradiuskm, maxradiuskm=maxradiuskm,
-            limit=limit, offset=offset, orderby=orderby, datacenter=datacenter,
+            starttime=starttime,
+            endtime=endtime,
+            updatedafter=updatedafter,
+            minmag=minmag,
+            maxmag=maxmag,
+            minlat=minlat,
+            maxlat=maxlat,
+            minlon=minlon,
+            maxlon=maxlon,
+            mindepth=mindepth,
+            maxdepth=maxdepth,
+            latitude=latitude,
+            longitude=longitude,
+            minradiuskm=minradiuskm,
+            maxradiuskm=maxradiuskm,
+            limit=limit,
+            offset=offset,
+            orderby=orderby,
+            datacenter=datacenter,
         )
     except ValidationError as e:
         raise ValueError(f"Invalid parameters: {e}") from e
 
-    today = date.today()
+    today = datetime.now(UTC).date()
     start = params.starttime or f"{today.isoformat()}T00:00:00"
     end = params.endtime or f"{today.isoformat()}T23:59:59"
 
     logger.info(
         "Querying earthquakes: %s to %s, minmag=%s, limit=%s, offset=%s, orderby=%s, datacenter=%s",
-        start, end, params.minmag, params.limit, params.offset, params.orderby, params.datacenter,
+        start,
+        end,
+        params.minmag,
+        params.limit,
+        params.offset,
+        params.orderby,
+        params.datacenter,
     )
 
     try:
         columns, rows, api_url = await query_events_text(
-            starttime=start, endtime=end,
-            minmag=params.minmag, maxmag=params.maxmag,
-            minlat=params.minlat, maxlat=params.maxlat,
-            minlon=params.minlon, maxlon=params.maxlon,
-            mindepth=params.mindepth, maxdepth=params.maxdepth,
-            latitude=params.latitude, longitude=params.longitude,
-            minradiuskm=params.minradiuskm, maxradiuskm=params.maxradiuskm,
-            limit=params.limit, offset=params.offset, orderby=params.orderby,
-            updatedafter=params.updatedafter, datacenter=params.datacenter,
+            starttime=start,
+            endtime=end,
+            minmag=params.minmag,
+            maxmag=params.maxmag,
+            minlat=params.minlat,
+            maxlat=params.maxlat,
+            minlon=params.minlon,
+            maxlon=params.maxlon,
+            mindepth=params.mindepth,
+            maxdepth=params.maxdepth,
+            latitude=params.latitude,
+            longitude=params.longitude,
+            minradiuskm=params.minradiuskm,
+            maxradiuskm=params.maxradiuskm,
+            limit=params.limit,
+            offset=params.offset,
+            orderby=params.orderby,
+            updatedafter=params.updatedafter,
+            datacenter=params.datacenter,
         )
     except DatacenterError as e:
         return _error_payload(e)
@@ -178,19 +210,33 @@ async def fdsn_query_earthquakes(
     }
     if has_more:
         pagination["next_offset"] = params.offset + returned_count
-        pagination["note"] = "Result truncated at limit. Fetch next_offset or narrow the filters."
+        pagination["note"] = (
+            "Result truncated at limit. Fetch next_offset or narrow the filters."
+        )
 
     query_echo = {
-        k: v for k, v in {
-            "starttime": start, "endtime": end, "updatedafter": params.updatedafter,
-            "minmag": params.minmag, "maxmag": params.maxmag,
-            "minlat": params.minlat, "maxlat": params.maxlat,
-            "minlon": params.minlon, "maxlon": params.maxlon,
-            "mindepth": params.mindepth, "maxdepth": params.maxdepth,
-            "latitude": params.latitude, "longitude": params.longitude,
-            "minradiuskm": params.minradiuskm, "maxradiuskm": params.maxradiuskm,
-            "limit": params.limit, "offset": params.offset, "orderby": params.orderby,
-        }.items() if v is not None
+        k: v
+        for k, v in {
+            "starttime": start,
+            "endtime": end,
+            "updatedafter": params.updatedafter,
+            "minmag": params.minmag,
+            "maxmag": params.maxmag,
+            "minlat": params.minlat,
+            "maxlat": params.maxlat,
+            "minlon": params.minlon,
+            "maxlon": params.maxlon,
+            "mindepth": params.mindepth,
+            "maxdepth": params.maxdepth,
+            "latitude": params.latitude,
+            "longitude": params.longitude,
+            "minradiuskm": params.minradiuskm,
+            "maxradiuskm": params.maxradiuskm,
+            "limit": params.limit,
+            "offset": params.offset,
+            "orderby": params.orderby,
+        }.items()
+        if v is not None
     }
 
     return json.dumps(
@@ -218,7 +264,9 @@ async def fdsn_query_earthquakes(
     ),
     annotations=_QUERY_ANNOTATIONS,
 )
-async def fdsn_get_earthquake_by_id(eventid: EventIdInput, datacenter: str = "INGV") -> str:
+async def fdsn_get_earthquake_by_id(
+    eventid: EventIdInput, datacenter: str = "INGV"
+) -> str:
     try:
         params = GetEarthquakeByIdInput(eventid=eventid, datacenter=datacenter)
     except ValidationError as e:
@@ -227,20 +275,27 @@ async def fdsn_get_earthquake_by_id(eventid: EventIdInput, datacenter: str = "IN
     logger.info("Getting earthquake %s from %s", params.eventid, params.datacenter)
 
     try:
-        catalog, api_url = await get_event_by_id(eventid=params.eventid, datacenter=params.datacenter)
+        catalog, api_url = await get_event_by_id(
+            eventid=params.eventid, datacenter=params.datacenter
+        )
     except DatacenterError as e:
         return _error_payload(e)
 
     if len(catalog) == 0:
-        return _not_found_payload(params.datacenter, api_url, params.eventid, event=None)
+        return _not_found_payload(
+            params.datacenter, api_url, params.eventid, event=None
+        )
 
     event_data = event_to_full_dict(catalog[0])
     return json.dumps(
         {
-            "datacenter": params.datacenter, "api_url": api_url,
-            "found": True, "event": event_data,
+            "datacenter": params.datacenter,
+            "api_url": api_url,
+            "found": True,
+            "event": event_data,
         },
-        indent=2, default=str,
+        indent=2,
+        default=str,
     )
 
 
@@ -255,23 +310,33 @@ async def fdsn_get_earthquake_by_id(eventid: EventIdInput, datacenter: str = "IN
     ),
     annotations=_QUERY_ANNOTATIONS,
 )
-async def fdsn_get_arrivals_by_id(eventid: EventIdInput, datacenter: str = "INGV") -> str:
+async def fdsn_get_arrivals_by_id(
+    eventid: EventIdInput, datacenter: str = "INGV"
+) -> str:
     try:
         params = GetArrivalsByIdInput(eventid=eventid, datacenter=datacenter)
     except ValidationError as e:
         raise ValueError(f"Invalid parameters: {e}") from e
 
-    logger.info("Getting arrivals for earthquake %s from %s", params.eventid, params.datacenter)
+    logger.info(
+        "Getting arrivals for earthquake %s from %s", params.eventid, params.datacenter
+    )
 
     try:
-        catalog, api_url = await get_arrivals_by_id(eventid=params.eventid, datacenter=params.datacenter)
+        catalog, api_url = await get_arrivals_by_id(
+            eventid=params.eventid, datacenter=params.datacenter
+        )
     except DatacenterError as e:
         return _error_payload(e)
 
     if len(catalog) == 0:
         return _not_found_payload(
-            params.datacenter, api_url, params.eventid,
-            arrivals_count=0, arrivals=[], picks=[],
+            params.datacenter,
+            api_url,
+            params.eventid,
+            arrivals_count=0,
+            arrivals=[],
+            picks=[],
         )
 
     event = catalog[0]
@@ -281,9 +346,13 @@ async def fdsn_get_arrivals_by_id(eventid: EventIdInput, datacenter: str = "INGV
     picks = [obspy_to_dict(p) for p in event.picks]
 
     result = {
-        "datacenter": params.datacenter, "api_url": api_url,
-        "found": True, "event_id": event_id,
-        "arrivals_count": len(arrivals), "arrivals": arrivals, "picks": picks,
+        "datacenter": params.datacenter,
+        "api_url": api_url,
+        "found": True,
+        "event_id": event_id,
+        "arrivals_count": len(arrivals),
+        "arrivals": arrivals,
+        "picks": picks,
     }
     if len(arrivals) == 0:
         result["message"] = _absent_resource_message(
@@ -303,32 +372,46 @@ async def fdsn_get_arrivals_by_id(eventid: EventIdInput, datacenter: str = "INGV
     ),
     annotations=_QUERY_ANNOTATIONS,
 )
-async def fdsn_get_allmagnitudes_by_id(eventid: EventIdInput, datacenter: str = "INGV") -> str:
+async def fdsn_get_allmagnitudes_by_id(
+    eventid: EventIdInput, datacenter: str = "INGV"
+) -> str:
     try:
         params = GetAllMagnitudesByIdInput(eventid=eventid, datacenter=datacenter)
     except ValidationError as e:
         raise ValueError(f"Invalid parameters: {e}") from e
 
-    logger.info("Getting all magnitudes for earthquake %s from %s", params.eventid, params.datacenter)
+    logger.info(
+        "Getting all magnitudes for earthquake %s from %s",
+        params.eventid,
+        params.datacenter,
+    )
 
     try:
-        catalog, api_url = await get_allmagnitudes_by_id(eventid=params.eventid, datacenter=params.datacenter)
+        catalog, api_url = await get_allmagnitudes_by_id(
+            eventid=params.eventid, datacenter=params.datacenter
+        )
     except DatacenterError as e:
         return _error_payload(e)
 
     if len(catalog) == 0:
         return _not_found_payload(
-            params.datacenter, api_url, params.eventid,
-            magnitudes_count=0, magnitudes=[],
+            params.datacenter,
+            api_url,
+            params.eventid,
+            magnitudes_count=0,
+            magnitudes=[],
         )
 
     event = catalog[0]
     event_id = _extract_event_id(event)
     magnitudes = _items_with_preferred(event.magnitudes, event.preferred_magnitude_id)
     result = {
-        "datacenter": params.datacenter, "api_url": api_url,
-        "found": True, "event_id": event_id,
-        "magnitudes_count": len(magnitudes), "magnitudes": magnitudes,
+        "datacenter": params.datacenter,
+        "api_url": api_url,
+        "found": True,
+        "event_id": event_id,
+        "magnitudes_count": len(magnitudes),
+        "magnitudes": magnitudes,
     }
     if len(magnitudes) == 0:
         result["message"] = _absent_resource_message(
@@ -342,38 +425,50 @@ async def fdsn_get_allmagnitudes_by_id(eventid: EventIdInput, datacenter: str = 
     description=(
         "Get all computed origin solutions (hypocenter locations) for an earthquake event. "
         "Use this when asked about alternative locations, origin comparisons, or which "
-        "agencies computed origins.\n\n"
-        + _EVENTID_NOTE
-        + _DATACENTER_NOTE
+        "agencies computed origins.\n\n" + _EVENTID_NOTE + _DATACENTER_NOTE
     ),
     annotations=_QUERY_ANNOTATIONS,
 )
-async def fdsn_get_allorigins_by_id(eventid: EventIdInput, datacenter: str = "INGV") -> str:
+async def fdsn_get_allorigins_by_id(
+    eventid: EventIdInput, datacenter: str = "INGV"
+) -> str:
     try:
         params = GetAllOriginsByIdInput(eventid=eventid, datacenter=datacenter)
     except ValidationError as e:
         raise ValueError(f"Invalid parameters: {e}") from e
 
-    logger.info("Getting all origins for earthquake %s from %s", params.eventid, params.datacenter)
+    logger.info(
+        "Getting all origins for earthquake %s from %s",
+        params.eventid,
+        params.datacenter,
+    )
 
     try:
-        catalog, api_url = await get_allorigins_by_id(eventid=params.eventid, datacenter=params.datacenter)
+        catalog, api_url = await get_allorigins_by_id(
+            eventid=params.eventid, datacenter=params.datacenter
+        )
     except DatacenterError as e:
         return _error_payload(e)
 
     if len(catalog) == 0:
         return _not_found_payload(
-            params.datacenter, api_url, params.eventid,
-            origins_count=0, origins=[],
+            params.datacenter,
+            api_url,
+            params.eventid,
+            origins_count=0,
+            origins=[],
         )
 
     event = catalog[0]
     event_id = _extract_event_id(event)
     origins = _items_with_preferred(event.origins, event.preferred_origin_id)
     result = {
-        "datacenter": params.datacenter, "api_url": api_url,
-        "found": True, "event_id": event_id,
-        "origins_count": len(origins), "origins": origins,
+        "datacenter": params.datacenter,
+        "api_url": api_url,
+        "found": True,
+        "event_id": event_id,
+        "origins_count": len(origins),
+        "origins": origins,
     }
     if len(origins) == 0:
         result["message"] = _absent_resource_message(
@@ -394,34 +489,49 @@ async def fdsn_get_allorigins_by_id(eventid: EventIdInput, datacenter: str = "IN
     ),
     annotations=_QUERY_ANNOTATIONS,
 )
-async def fdsn_get_focalmechanism_by_id(eventid: EventIdInput, datacenter: str = "INGV") -> str:
+async def fdsn_get_focalmechanism_by_id(
+    eventid: EventIdInput, datacenter: str = "INGV"
+) -> str:
     try:
         params = GetFocalMechanismByIdInput(eventid=eventid, datacenter=datacenter)
     except ValidationError as e:
         raise ValueError(f"Invalid parameters: {e}") from e
 
-    logger.info("Getting focal mechanism for earthquake %s from %s", params.eventid, params.datacenter)
+    logger.info(
+        "Getting focal mechanism for earthquake %s from %s",
+        params.eventid,
+        params.datacenter,
+    )
 
     try:
-        catalog, api_url = await get_focalmechanism_by_id(eventid=params.eventid, datacenter=params.datacenter)
+        catalog, api_url = await get_focalmechanism_by_id(
+            eventid=params.eventid, datacenter=params.datacenter
+        )
     except DatacenterError as e:
         return _error_payload(e)
 
     if len(catalog) == 0:
         return _not_found_payload(
-            params.datacenter, api_url, params.eventid,
-            focal_mechanisms_count=0, focal_mechanisms=[],
+            params.datacenter,
+            api_url,
+            params.eventid,
+            focal_mechanisms_count=0,
+            focal_mechanisms=[],
         )
 
     event = catalog[0]
     event_id = _extract_event_id(event)
     focal_mechanisms = _items_with_preferred(
-        event.focal_mechanisms, event.preferred_focal_mechanism_id,
+        event.focal_mechanisms,
+        event.preferred_focal_mechanism_id,
     )
     result = {
-        "datacenter": params.datacenter, "api_url": api_url,
-        "found": True, "event_id": event_id,
-        "focal_mechanisms_count": len(focal_mechanisms), "focal_mechanisms": focal_mechanisms,
+        "datacenter": params.datacenter,
+        "api_url": api_url,
+        "found": True,
+        "event_id": event_id,
+        "focal_mechanisms_count": len(focal_mechanisms),
+        "focal_mechanisms": focal_mechanisms,
     }
     if len(focal_mechanisms) == 0:
         result["message"] = _absent_resource_message(

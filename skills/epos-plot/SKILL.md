@@ -9,6 +9,11 @@ Load `analysis` and work only inside the active study bundle. Prefer the saved `
 
 ## Requirements and defaults
 
+CRITICAL: Whenever you create a jupyter notebook, you MUST include a `requirements.txt` file in the study bundle with all the required libraries (e.g. `matplotlib`, `pandas`). Furthermore, the VERY FIRST CELL of the notebook MUST execute a script to install them (e.g. `!pip install -r requirements.txt` or `!pip install matplotlib pandas`). Do not rely on global system packages; assume the environment is completely bare. This is mandatory to prevent `ModuleNotFoundError`.
+Create or propose the creation of the Jupyter Notebook ONLY if explicitly requested by the user, or only AT THE END of the workflow, after having successfully validated the analysis/plot in Python (`analysis.py`). Do not create the notebook at the beginning of the task.
+
+**Workflow ordering:** The agent must NEVER propose visualization or analysis options (plots, maps, scatter) before physically acquiring the data. Make your graphical proposals only based on the nature and quantity of the data just downloaded and verified.
+
 Use the study context, scientific question, confirmed filters and dataset metadata already present in state. Ask a question only when the requested scientific comparison remains ambiguous. Never ask for coordinates when a selected resource or saved dataset already provides a bounding box, point geometry or coordinate columns.
 
 Do not use a hardcoded place, center, extent, layer, CRS, endpoint or time range. Derive them from, in order:

@@ -1,7 +1,7 @@
 """Pydantic input models for FDSNWS Event MCP tools."""
 
 from datetime import datetime
-from typing import Annotated, Literal, Optional, Union
+from typing import Annotated, Literal, Union
 
 from pydantic import (
     BaseModel,
@@ -80,71 +80,77 @@ class QueryEarthquakesInput(BaseModel):
         extra="forbid",
     )
 
-    starttime: Optional[str] = Field(
+    starttime: str | None = Field(
         default=None,
         description="Start time in YYYY-MM-DDTHH:MM:SS format (default: today 00:00:00)",
     )
-    endtime: Optional[str] = Field(
+    endtime: str | None = Field(
         default=None,
         description="End time in YYYY-MM-DDTHH:MM:SS format (default: today 23:59:59)",
     )
-    updatedafter: Optional[str] = Field(
+    updatedafter: str | None = Field(
         default=None,
         description="Return events updated after this time (ISO 8601: YYYY-MM-DDTHH:MM:SS)",
     )
-    minmag: Optional[float] = Field(
+    minmag: float | None = Field(
         default=None,
         ge=-2.0,
         le=10.0,
         description="Minimum magnitude (e.g., 4.0 for significant events)",
     )
-    maxmag: Optional[float] = Field(
+    maxmag: float | None = Field(
         default=None, ge=-2.0, le=10.0, description="Maximum magnitude"
     )
-    minlat: Optional[float] = Field(
+    minlat: float | None = Field(
         default=None,
         ge=-90.0,
         le=90.0,
         description="Minimum latitude (WGS84) - for geographic filtering",
     )
-    maxlat: Optional[float] = Field(
+    maxlat: float | None = Field(
         default=None,
         ge=-90.0,
         le=90.0,
         description="Maximum latitude (WGS84) - for geographic filtering",
     )
-    minlon: Optional[float] = Field(
+    minlon: float | None = Field(
         default=None,
         ge=-180.0,
         le=180.0,
         description="Minimum longitude (WGS84) - for geographic filtering",
     )
-    maxlon: Optional[float] = Field(
+    maxlon: float | None = Field(
         default=None,
         ge=-180.0,
         le=180.0,
         description="Maximum longitude (WGS84) - for geographic filtering",
     )
-    mindepth: Optional[float] = Field(
+    mindepth: float | None = Field(
         default=None, ge=0.0, description="Minimum depth in kilometers"
     )
-    maxdepth: Optional[float] = Field(
+    maxdepth: float | None = Field(
         default=None, ge=0.0, description="Maximum depth in kilometers"
     )
-    latitude: Optional[float] = Field(
-        default=None, ge=-90.0, le=90.0,
+    latitude: float | None = Field(
+        default=None,
+        ge=-90.0,
+        le=90.0,
         description="Center latitude for radial search (WGS84)",
     )
-    longitude: Optional[float] = Field(
-        default=None, ge=-180.0, le=180.0,
+    longitude: float | None = Field(
+        default=None,
+        ge=-180.0,
+        le=180.0,
         description="Center longitude for radial search (WGS84)",
     )
-    minradiuskm: Optional[float] = Field(
-        default=None, ge=0.0,
+    minradiuskm: float | None = Field(
+        default=None,
+        ge=0.0,
         description="Minimum radius in km for radial search",
     )
-    maxradiuskm: Optional[float] = Field(
-        default=None, ge=0.0,
+    maxradiuskm: float | None = Field(
+        default=None,
+        ge=0.0,
         description="Maximum radius in km for radial search",
     )
     limit: int = Field(
@@ -179,9 +185,10 @@ class QueryEarthquakesInput(BaseModel):
 
     @field_validator("starttime", "endtime", "updatedafter", mode="before")
     @classmethod
-    def validate_datetime_format(cls, v: Optional[str]) -> Optional[str]:
+    def validate_datetime_format(cls, v: str | None) -> str | None:
         if v is None:
             return v
+        v = v.removesuffix("Z")
         try:
             datetime.fromisoformat(v)
         except ValueError:
@@ -195,8 +202,7 @@ class QueryEarthquakesInput(BaseModel):
         has_radial = has_lat or has_lon
 
         has_bbox = any(
-            v is not None
-            for v in (self.minlat, self.maxlat, self.minlon, self.maxlon)
+            v is not None for v in (self.minlat, self.maxlat, self.minlon, self.maxlon)
         )
 
         if has_lat != has_lon:

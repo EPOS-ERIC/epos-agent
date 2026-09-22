@@ -44,7 +44,7 @@ The catalogue adapter traverses all result pages internally, deduplicates candid
 
 ## Guided study workflow
 
-New studies follow a provider-neutral workflow: context card, scientific question, service plan, one download confirmation, preliminary visualization, Python script and Jupyter notebook. Missing essentials are collected in one compact question block. Each study is stored as a self-contained bundle under `~/epos-agent/workspace/<study>-<timestamp>/`; use `/workspace` to see the active bundle and recent artifacts.
+New studies follow a provider-neutral workflow: context card, scientific question, service selection, three targeted analysis/plot suggestions plus “Valuta altre opzioni”, one data-acquisition confirmation, preliminary visualization, Python script and Jupyter notebook. Missing essentials are collected in one compact question block. Each study is stored as a self-contained bundle under `~/epos-agent/workspace/<study>-<timestamp>/`; use `/workspace` to see the active bundle and recent artifacts.
 
 ## Security and runtime data
 
@@ -52,7 +52,7 @@ Sessions, cache, provenance logs, generated workspace files, Python environments
 
 ## Download safety
 
-Service execution performs a size preflight when the endpoint supports `HEAD`, includes known and unknown sizes in one combined plan, and waits for one researcher confirmation. The cumulative raw-data budget is 1 GiB per study; there is no separate 50 MB threshold. Responses are streamed into the study bundle and chat receives only a short preview. Transport completeness and scientific dataset completeness are reported separately.
+Catalogue searches, metadata and service descriptions run without confirmation. Calls that return scientific data wait for one researcher confirmation covering services, parameters, formats and the chosen analysis; no download-size estimate is produced. The cumulative raw-data budget is enforced at transfer time at 1 GiB per study. Complete responses are saved in the study bundle, while model context receives only essential metadata, measured counts, paths and at most five representative records. Transport completeness and scientific dataset completeness are reported separately.
 
 ## Included FDSN service
 

@@ -27,16 +27,13 @@ if hasattr(sys.stdout, "reconfigure"):
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(line_buffering=False, write_through=True)
 
+# ── MCP JSON-RPC helpers (raw fd I/O, no Python buffering) ─────────────
+import select
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
-
-# ── MCP JSON-RPC helpers (raw fd I/O, no Python buffering) ─────────────
-
-import os
-import select
 
 _FD_STDIN = 0
 _FD_STDOUT = 1
@@ -67,7 +64,6 @@ def _fd_readline() -> bytes:
 
 def _peek_stdin() -> bool:
     """Check if data is available on stdin without blocking."""
-    import select
     readable, _, _ = select.select([sys.stdin], [], [], 0)
     return bool(readable)
 
@@ -83,6 +79,7 @@ def _fd_write(data: bytes) -> None:
 def read_message() -> dict[str, Any]:
     """Read a single JSON-RPC message from stdin (LSP/MCP framing)."""
     import select as _select
+
     # Wait up to 90 seconds for data
     readable, _, _ = _select.select([sys.stdin], [], [], 90)
     if not readable:
@@ -108,7 +105,7 @@ def read_message() -> dict[str, Any]:
 def send_message(msg: dict[str, Any]) -> None:
     """Write a JSON-RPC message to stdout with LSP framing."""
     body = json.dumps(msg).encode("utf-8")
-    header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+    header = f"Content-Length: {len(body)}\r\n\r\n".encode()
     _fd_write(header + body)
 
 
@@ -117,13 +114,19 @@ def send_result(req_id: Any, result: Any) -> None:
 
 
 def send_error(req_id: Any, code: int, message: str) -> None:
-    send_message({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}})
+    send_message(
+        {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+    )
 
 
 # ── HTTP helper ───────────────────────────────────────────────────────
 
 EPOS_API_BASE = os.environ.get("EPOS_API_BASE", "https://www.ics-c.epos-eu.org/api/v1")
-ARTIFACTS = Path(os.environ.get("EPOS_ARTIFACTS", str(Path(__file__).resolve().parent.parent / "artifacts")))
+ARTIFACTS = Path(
+    os.environ.get(
+        "EPOS_ARTIFACTS", str(Path(__file__).resolve().parent.parent / "artifacts")
+    )
+)
 ARTIFACTS.mkdir(parents=True, exist_ok=True)
 
 
@@ -133,7 +136,13 @@ def http_get(url: str, timeout: int = 60) -> dict[str, Any]:
             body = resp.read()
             ct = resp.headers.get_content_type()
             charset = resp.headers.get_content_charset() or "utf-8"
-            return {"ok": True, "status": resp.status, "ct": ct, "text": body.decode(charset, errors="replace"), "bytes": len(body)}
+            return {
+                "ok": True,
+                "status": resp.status,
+                "ct": ct,
+                "text": body.decode(charset, errors="replace"),
+                "bytes": len(body),
+            }
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")[:2000]
         return {"ok": False, "status": e.code, "error": detail}
@@ -149,6 +158,7 @@ def save(name: str, data: bytes, ct: str = "") -> str:
 
 # ── Tool implementations ──────────────────────────────────────────────
 
+
 def tool_search(args: dict[str, Any]) -> str:
     q = args.get("q", "")
     keywords = args.get("keywords", "")
@@ -161,12 +171,22 @@ def tool_search(args: dict[str, Any]) -> str:
     facetstype = args.get("facetstype", "")
     facets = args.get("facets", "")
 
-    pairs = [(k, v) for k, v in [
-        ("q", q), ("keywords", keywords), ("organisations", organisations),
-        ("sciencedomains", sciencedomains), ("servicetypes", servicetypes),
-        ("startDate", startDate), ("endDate", endDate), ("bbox", bbox),
-        ("facetstype", facetstype), ("facets", facets),
-    ] if v]
+    pairs = [
+        (k, v)
+        for k, v in [
+            ("q", q),
+            ("keywords", keywords),
+            ("organisations", organisations),
+            ("sciencedomains", sciencedomains),
+            ("servicetypes", servicetypes),
+            ("startDate", startDate),
+            ("endDate", endDate),
+            ("bbox", bbox),
+            ("facetstype", facetstype),
+            ("facets", facets),
+        ]
+        if v
+    ]
     url = f"{EPOS_API_BASE}/resources/search"
     if pairs:
         url += "?" + urllib.parse.urlencode(pairs)
@@ -184,7 +204,9 @@ def tool_organizations(args: dict[str, Any]) -> str:
     country = args.get("country", "")
     org_type = args.get("org_type", "")
 
-    pairs = [(k, v) for k, v in [("q", q), ("country", country), ("type", org_type)] if v]
+    pairs = [
+        (k, v) for k, v in [("q", q), ("country", country), ("type", org_type)] if v
+    ]
     url = f"{EPOS_API_BASE}/resources/organizations"
     if pairs:
         url += "?" + urllib.parse.urlencode(pairs)
@@ -223,26 +245,47 @@ def tool_execute(args: dict[str, Any]) -> str:
     if params:
         try:
             if not isinstance(json.loads(params), dict):
-                return "Error: params must be a JSON object like '{\"key\": \"value\"}'"
+                return 'Error: params must be a JSON object like \'{"key": "value"}\''
         except json.JSONDecodeError as e:
             return f"Error: invalid params JSON: {e}"
 
     encoded = urllib.parse.quote(dist_id, safe="")
     url = f"{EPOS_API_BASE}/execute/{encoded}"
-    q = [(k, v) for k, v in [
-        ("useDefaults", useDefaults if useDefaults else None),
-        ("format", fmt), ("startDate", startDate), ("endDate", endDate),
-        ("bbox", bbox), ("params", params if params else None),
-    ] if v]
+    q = [
+        (k, v)
+        for k, v in [
+            ("useDefaults", useDefaults if useDefaults else None),
+            ("format", fmt),
+            ("startDate", startDate),
+            ("endDate", endDate),
+            ("bbox", bbox),
+            ("params", params if params else None),
+        ]
+        if v
+    ]
     if q:
         url += "?" + urllib.parse.urlencode(q)
     r = http_get(url, timeout=120)
     if not r["ok"]:
         return f"Error {r['status']}: {r.get('error', 'unknown')}"
     ct = r["ct"]
-    ext = ".geojson" if "geo+json" in ct else ".json" if "json" in ct else ".xml" if "xml" in ct else ".csv" if "csv" in ct else ".bin"
+    ext = (
+        ".geojson"
+        if "geo+json" in ct
+        else ".json"
+        if "json" in ct
+        else ".xml"
+        if "xml" in ct
+        else ".csv"
+        if "csv" in ct
+        else ".bin"
+    )
     p = save(f"mcp-execute{ext}", r["text"].encode(), ct)
-    preview = r["text"][:4000] if ct.startswith("text/") or "json" in ct else f"[{r['bytes']} bytes of binary data]"
+    preview = (
+        r["text"][:4000]
+        if ct.startswith("text/") or "json" in ct
+        else f"[{r['bytes']} bytes of binary data]"
+    )
     return f"Execute OK ({r['bytes']} bytes, {ct}) → {p}\n\n{preview}"
 
 
@@ -283,6 +326,7 @@ def tool_inspect(args: dict[str, Any]) -> str:
 
 def tool_visualize(args: dict[str, Any]) -> str:
     from tools.epos import visualize as _vis
+
     fp = Path(args.get("file_path", ""))
     if not fp.is_file():
         return f"File not found: {fp}"
@@ -300,9 +344,19 @@ def tool_fetch(args: dict[str, Any]) -> str:
     if not r["ok"]:
         return f"Error {r['status']}: {r.get('error', 'unknown')}"
     ct = r["ct"]
-    ext = ".xml" if "xml" in ct or r["text"].lstrip()[:1] == "<" else ".json" if "json" in ct else ".bin"
+    ext = (
+        ".xml"
+        if "xml" in ct or r["text"].lstrip()[:1] == "<"
+        else ".json"
+        if "json" in ct
+        else ".bin"
+    )
     p = save(f"mcp-fetched{ext}", r["text"].encode(), ct)
-    preview = r["text"][:4000] if ct.startswith("text/") or "json" in ct else f"[{r['bytes']} bytes]"
+    preview = (
+        r["text"][:4000]
+        if ct.startswith("text/") or "json" in ct
+        else f"[{r['bytes']} bytes]"
+    )
     return f"Fetched OK ({r['bytes']} bytes, {ct}) → {p}\n\n{preview}"
 
 
@@ -316,14 +370,32 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "q": {"type": "string", "description": "Free-text query"},
-                "keywords": {"type": "string", "description": "Comma-separated keywords"},
-                "organisations": {"type": "string", "description": "Organization ID (from epos_organizations)"},
-                "sciencedomains": {"type": "string", "description": "Science domain filter"},
-                "servicetypes": {"type": "string", "description": "Service type filter (WMS, WFS, WCS)"},
+                "keywords": {
+                    "type": "string",
+                    "description": "Comma-separated keywords",
+                },
+                "organisations": {
+                    "type": "string",
+                    "description": "Organization ID (from epos_organizations)",
+                },
+                "sciencedomains": {
+                    "type": "string",
+                    "description": "Science domain filter",
+                },
+                "servicetypes": {
+                    "type": "string",
+                    "description": "Service type filter (WMS, WFS, WCS)",
+                },
                 "startDate": {"type": "string", "description": "Start date ISO"},
                 "endDate": {"type": "string", "description": "End date ISO"},
-                "bbox": {"type": "string", "description": "Bounding box: west,south,east,north"},
-                "facetstype": {"type": "string", "enum": ["categories", "dataproviders", "serviceproviders"]},
+                "bbox": {
+                    "type": "string",
+                    "description": "Bounding box: west,south,east,north",
+                },
+                "facetstype": {
+                    "type": "string",
+                    "enum": ["categories", "dataproviders", "serviceproviders"],
+                },
                 "facets": {"type": "string", "enum": ["true", "false"]},
             },
         },
@@ -334,9 +406,15 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "q": {"type": "string", "description": "Organization name query (e.g. INGV)"},
+                "q": {
+                    "type": "string",
+                    "description": "Organization name query (e.g. INGV)",
+                },
                 "country": {"type": "string", "description": "ISO country code"},
-                "org_type": {"type": "string", "description": "dataproviders, serviceproviders, or both"},
+                "org_type": {
+                    "type": "string",
+                    "description": "dataproviders, serviceproviders, or both",
+                },
             },
         },
     },
@@ -346,8 +424,15 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "distribution_id": {"type": "string", "description": "Distribution ID from search results"},
-                "extended": {"type": "string", "enum": ["true", "false"], "description": "Include extended payload"},
+                "distribution_id": {
+                    "type": "string",
+                    "description": "Distribution ID from search results",
+                },
+                "extended": {
+                    "type": "string",
+                    "enum": ["true", "false"],
+                    "description": "Include extended payload",
+                },
             },
             "required": ["distribution_id"],
         },
@@ -358,13 +443,29 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "distribution_id": {"type": "string", "description": "Distribution ID to execute"},
-                "params": {"type": "string", "description": "JSON object with service parameters, e.g. {\"starttime\":\"2024-01-01\"}"},
-                "format": {"type": "string", "description": "Output format (application/json, application/geo+json, text/csv)"},
+                "distribution_id": {
+                    "type": "string",
+                    "description": "Distribution ID to execute",
+                },
+                "params": {
+                    "type": "string",
+                    "description": 'JSON object with service parameters, e.g. {"starttime":"2024-01-01"}',
+                },
+                "format": {
+                    "type": "string",
+                    "description": "Output format (application/json, application/geo+json, text/csv)",
+                },
                 "startDate": {"type": "string", "description": "Start date ISO"},
                 "endDate": {"type": "string", "description": "End date ISO"},
-                "bbox": {"type": "string", "description": "Bounding box: west,south,east,north"},
-                "useDefaults": {"type": "string", "enum": ["true", "false"], "description": "Use metadata defaults"},
+                "bbox": {
+                    "type": "string",
+                    "description": "Bounding box: west,south,east,north",
+                },
+                "useDefaults": {
+                    "type": "string",
+                    "enum": ["true", "false"],
+                    "description": "Use metadata defaults",
+                },
             },
             "required": ["distribution_id"],
         },
@@ -417,6 +518,7 @@ DISPATCH = {
 
 # ── MCP main loop ─────────────────────────────────────────────────────
 
+
 def log(msg: str) -> None:
     sys.stderr.write(f"[EPOS MCP] {msg}\n")
     sys.stderr.flush()
@@ -431,6 +533,7 @@ def main() -> None:
 
     # Check if stdin has data ready
     import select as _select
+
     readable, _, _ = _select.select([sys.stdin], [], [], 0)
     log(f"stdin ready at startup: {readable}")
 
@@ -451,11 +554,14 @@ def main() -> None:
         log(f"← {method} id={req_id}")
 
         if method == "initialize":
-            send_result(req_id, {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "epos-mcp", "version": "1.0.0"},
-            })
+            send_result(
+                req_id,
+                {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {"name": "epos-mcp", "version": "1.0.0"},
+                },
+            )
             log("→ initialize response sent")
 
         elif method == "notifications/initialized":
@@ -479,7 +585,13 @@ def main() -> None:
                     log(f"  → {tool_name} result sent ({len(result)} chars)")
                 except Exception as e:
                     log(f"  ✗ {tool_name} failed: {e}")
-                    send_result(req_id, {"content": [{"type": "text", "text": f"Error: {e}"}], "isError": True})
+                    send_result(
+                        req_id,
+                        {
+                            "content": [{"type": "text", "text": f"Error: {e}"}],
+                            "isError": True,
+                        },
+                    )
 
         elif method == "ping":
             send_result(req_id, {})

@@ -47,10 +47,14 @@ class EPOSHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/v1/models":
-            self._send_json({
-                "object": "list",
-                "data": [{"id": "epos-tools", "object": "model", "owned_by": "epos"}],
-            })
+            self._send_json(
+                {
+                    "object": "list",
+                    "data": [
+                        {"id": "epos-tools", "object": "model", "owned_by": "epos"}
+                    ],
+                }
+            )
         elif self.path == "/health" or self.path == "/":
             self._send_json({"status": "ok"})
         else:
@@ -73,10 +77,8 @@ class EPOSHandler(BaseHTTPRequestHandler):
             return
 
         messages = request.get("messages", [])
-        tools_in = request.get("tools", openai_tools_schema)
 
         # Collect all tool calls the model requested
-        tool_calls: list[dict[str, Any]] = []
         tool_results: list[dict[str, Any]] = []
 
         for msg in messages:
@@ -88,18 +90,22 @@ class EPOSHandler(BaseHTTPRequestHandler):
                     except json.JSONDecodeError:
                         args = {}
                     result = run_tool(fn_name, args)
-                    tool_results.append({
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", str(uuid.uuid4())),
-                        "content": result,
-                    })
+                    tool_results.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", str(uuid.uuid4())),
+                            "content": result,
+                        }
+                    )
 
         # If last message is user, build a helpful response listing the tools
-        last_msg = messages[-1] if messages else {}
         content = (
             "EPOS API Tools Server\n\n"
             "This server exposes the following EPOS tools via OpenAI-compatible function calling:\n\n"
-            + "\n".join(f"- **{t['function']['name']}**: {t['function']['description']}" for t in openai_tools_schema)
+            + "\n".join(
+                f"- **{t['function']['name']}**: {t['function']['description']}"
+                for t in openai_tools_schema
+            )
             + "\n\nPass these tools in the `tools` parameter of your chat completion request. "
             "The model will return `tool_calls` and you execute them with `run_tool(name, args)`."
         )
@@ -109,11 +115,13 @@ class EPOSHandler(BaseHTTPRequestHandler):
             "object": "chat.completion",
             "created": int(datetime.now(UTC).timestamp()),
             "model": request.get("model", "epos-tools"),
-            "choices": [{
-                "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
-            }],
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
         self._send_json(response)
@@ -125,7 +133,9 @@ def main() -> None:
     print(f"  Models endpoint:  http://localhost:{PORT}/v1/models")
     print(f"  Chat completions: http://localhost:{PORT}/v1/chat/completions")
     print(f"  EPOS API base:    {os.environ.get('EPOS_API_BASE', '(not set)')}")
-    print(f"  Tools:            {', '.join(t['function']['name'] for t in openai_tools_schema)}")
+    print(
+        f"  Tools:            {', '.join(t['function']['name'] for t in openai_tools_schema)}"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

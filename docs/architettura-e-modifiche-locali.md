@@ -323,15 +323,16 @@ scelta del ricercatore l'agente può usare:
 - `execute_service` per eseguire una risorsa read-only.
 
 `execute_service` recupera prima i dettagli della risorsa, valida i parametri
-contro quelli dichiarati dal servizio e costruisce la richiesta gateway. Esegue
-un `HEAD` di preflight quando disponibile per stimare content type e dimensione.
+contro quelli dichiarati dal servizio e costruisce la richiesta gateway.
 
-- il piano complessivo richiede una sola conferma prima dei download;
+- il piano complessivo richiede una sola conferma prima delle chiamate che
+  acquisiscono dati scientifici e non include stime di dimensione;
+- ricerca, metadata, descrizioni e capabilities restano automatici;
 - ogni studio ha un limite cumulativo di 1 GiB;
-- se il server non fornisce una dimensione, il limite è controllato anche durante
-  lo streaming;
+- il limite è controllato durante il trasferimento;
 - l'intera risposta viene scritta in `workspace/`, mentre la chat riceve solo
-  percorso, byte, tipo, stato, anteprima limitata e provenance;
+  percorso, valori misurati, tipo, stato, metadata essenziali, al massimo cinque
+  record rappresentativi e provenance;
 - un errore nello streaming conserva il file con suffisso `.partial` e ne
   dichiara esplicitamente la completezza non verificata o parziale.
 
@@ -506,7 +507,6 @@ particolare, restano fuori dalla fase corrente:
 - pre-analisi standardizzata (struttura, completezza, missing values, anomalie);
 - template deterministici per grafici, mappe e notebook;
 - modalità demo guidata;
-- stima preventiva FDSN uniforme;
 - verifica end-to-end su più provider/modelli.
 
 La dimensione della risposta grezza ricevuta dal server EPOS resta fuori scope:

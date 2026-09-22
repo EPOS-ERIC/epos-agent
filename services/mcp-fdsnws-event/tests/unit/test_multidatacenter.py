@@ -14,14 +14,9 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
-from obspy import read_events
-from obspy.core.event import Catalog, Event
-from obspy.core.event.base import ResourceIdentifier
-from pydantic import ValidationError
-
 import fdsnws_event_server.obspy_client as oc
-import fdsnws_event_server.server as server
+import pytest
+from fdsnws_event_server import server
 from fdsnws_event_server.models import GetEarthquakeByIdInput
 from fdsnws_event_server.obspy_client import (
     DatacenterError,
@@ -29,6 +24,10 @@ from fdsnws_event_server.obspy_client import (
     parse_fdsn_text,
     query_events_text,
 )
+from obspy import read_events
+from obspy.core.event import Catalog, Event
+from obspy.core.event.base import ResourceIdentifier
+from pydantic import ValidationError
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 
@@ -55,9 +54,11 @@ PROVIDER_IDS = [p[0] for p in PROVIDERS]
 
 # --- Column sets: parsing is header-driven, not positional ------------------
 
+
 @pytest.mark.parametrize(
     "datacenter,fixture,ncols,depth_header,has_eventtype,first_id",
-    PROVIDERS, ids=PROVIDER_IDS,
+    PROVIDERS,
+    ids=PROVIDER_IDS,
 )
 def test_provider_response_parses(
     datacenter, fixture, ncols, depth_header, has_eventtype, first_id
@@ -78,13 +79,16 @@ def test_provider_response_parses(
 
 @pytest.mark.parametrize(
     "datacenter,fixture,ncols,depth_header,has_eventtype,first_id",
-    PROVIDERS, ids=PROVIDER_IDS,
+    PROVIDERS,
+    ids=PROVIDER_IDS,
 )
 def test_query_returns_provider_columns_unmodified(
     monkeypatch, datacenter, fixture, ncols, depth_header, has_eventtype, first_id
 ):
     raw = (FIXTURES / fixture).read_text()
-    monkeypatch.setattr(oc.requests, "get", lambda url, timeout=None: FakeResp(200, raw))
+    monkeypatch.setattr(
+        oc.requests, "get", lambda url, timeout=None: FakeResp(200, raw)
+    )
 
     columns, rows, api_url = run(query_events_text(datacenter=datacenter, limit=5))
 
@@ -97,9 +101,11 @@ def test_query_returns_provider_columns_unmodified(
 
 # --- Identifier formats ----------------------------------------------------
 
+
 @pytest.mark.parametrize(
     "datacenter,fixture,ncols,depth_header,has_eventtype,first_id",
-    PROVIDERS, ids=PROVIDER_IDS,
+    PROVIDERS,
+    ids=PROVIDER_IDS,
 )
 def test_real_provider_identifiers_are_accepted(
     datacenter, fixture, ncols, depth_header, has_eventtype, first_id
@@ -140,11 +146,17 @@ def test_malformed_identifiers_rejected(bad):
 
 # QuakeML resource_id spellings observed per provider -> expected extracted id.
 RESOURCE_IDS = [
-    ("INGV", "smi:webservices.ingv.it/fdsnws/event/1/query?eventId=37258271", "37258271"),
+    (
+        "INGV",
+        "smi:webservices.ingv.it/fdsnws/event/1/query?eventId=37258271",
+        "37258271",
+    ),
     (
         "USGS",
-        "quakeml:earthquake.usgs.gov/fdsnws/event/1/query"
-        "?eventid=us6000m0yg&format=quakeml",
+        (
+            "quakeml:earthquake.usgs.gov/fdsnws/event/1/query"
+            "?eventid=us6000m0yg&format=quakeml"
+        ),
         "us6000m0yg",
     ),
     ("GFZ", "smi:org.gfz-potsdam.de/geofon/gfz2024abmz", "gfz2024abmz"),
@@ -153,7 +165,8 @@ RESOURCE_IDS = [
 
 
 @pytest.mark.parametrize(
-    "datacenter,resource_id,expected", RESOURCE_IDS,
+    "datacenter,resource_id,expected",
+    RESOURCE_IDS,
     ids=[r[0] for r in RESOURCE_IDS],
 )
 def test_extract_event_id_per_provider(datacenter, resource_id, expected):
@@ -171,10 +184,13 @@ def test_extract_event_id_per_provider(datacenter, resource_id, expected):
 NO_DATA_STATUSES = [("INGV", 204), ("EMSC", 204), ("GFZ", 204), ("USGS", 404)]
 
 
-@pytest.mark.parametrize("datacenter,status", NO_DATA_STATUSES,
-                         ids=[f"{d}-{s}" for d, s in NO_DATA_STATUSES])
+@pytest.mark.parametrize(
+    "datacenter,status", NO_DATA_STATUSES, ids=[f"{d}-{s}" for d, s in NO_DATA_STATUSES]
+)
 def test_no_data_status_maps_to_empty_result(monkeypatch, datacenter, status):
-    monkeypatch.setattr(oc.requests, "get", lambda url, timeout=None: FakeResp(status, ""))
+    monkeypatch.setattr(
+        oc.requests, "get", lambda url, timeout=None: FakeResp(status, "")
+    )
     columns, rows, _ = run(query_events_text(datacenter=datacenter))
     assert columns == [] and rows == []
 
@@ -182,7 +198,9 @@ def test_no_data_status_maps_to_empty_result(monkeypatch, datacenter, status):
 def test_ingv_malformed_id_error_is_passed_through_verbatim(monkeypatch):
     """Only INGV rejects a malformed id upstream; its message must survive intact."""
     body = 'Error 400\n\nBad Request: \n "eventId" (eventId=not-an-id) must be numeric format.'
-    monkeypatch.setattr(oc.requests, "get", lambda url, timeout=None: FakeResp(400, body))
+    monkeypatch.setattr(
+        oc.requests, "get", lambda url, timeout=None: FakeResp(400, body)
+    )
 
     with pytest.raises(DatacenterError) as ei:
         run(query_events_text(datacenter="INGV"))
@@ -208,6 +226,7 @@ def test_upstream_error_payload_names_the_datacenter(monkeypatch, datacenter):
 
 # --- Not-found contract holds for non-numeric ids --------------------------
 
+
 @pytest.mark.parametrize(
     "datacenter,eventid",
     [("EMSC", "20240101_0000328"), ("GFZ", "gfz2024abmz"), ("USGS", "us6000m0yg")],
@@ -229,7 +248,8 @@ def test_not_found_message_echoes_non_numeric_id(monkeypatch, datacenter, eventi
 
 
 @pytest.mark.parametrize(
-    "datacenter,resource_id,expected", RESOURCE_IDS,
+    "datacenter,resource_id,expected",
+    RESOURCE_IDS,
     ids=[r[0] for r in RESOURCE_IDS],
 )
 def test_found_event_reports_provider_event_id(
@@ -340,12 +360,24 @@ QUAKEML_EVENTS = {
 BYID_TOOLS = [
     ("plain", "fdsn_get_earthquake_by_id", "get_event_by_id", None),
     ("arrivals", "fdsn_get_arrivals_by_id", "get_arrivals_by_id", "arrivals_count"),
-    ("allmagnitudes", "fdsn_get_allmagnitudes_by_id", "get_allmagnitudes_by_id",
-     "magnitudes_count"),
-    ("allorigins", "fdsn_get_allorigins_by_id", "get_allorigins_by_id",
-     "origins_count"),
-    ("allmagnitudes", "fdsn_get_focalmechanism_by_id", "get_focalmechanism_by_id",
-     "focal_mechanisms_count"),
+    (
+        "allmagnitudes",
+        "fdsn_get_allmagnitudes_by_id",
+        "get_allmagnitudes_by_id",
+        "magnitudes_count",
+    ),
+    (
+        "allorigins",
+        "fdsn_get_allorigins_by_id",
+        "get_allorigins_by_id",
+        "origins_count",
+    ),
+    (
+        "allmagnitudes",
+        "fdsn_get_focalmechanism_by_id",
+        "get_focalmechanism_by_id",
+        "focal_mechanisms_count",
+    ),
 ]
 
 # EMSC does not implement includeallmagnitudes and USGS does not implement
@@ -359,8 +391,10 @@ BYID_CASES = [
 ]
 
 # Test ids name the tool, not the fixture variant, because two tools share a document.
-BYID_IDS = [f"{c[0]}-{c[2].removeprefix('fdsn_get_').removesuffix('_by_id')}"
-            for c in BYID_CASES]
+BYID_IDS = [
+    f"{c[0]}-{c[2].removeprefix('fdsn_get_').removesuffix('_by_id')}"
+    for c in BYID_CASES
+]
 
 
 def _serve_fixture(monkeypatch, datacenter, variant, fetch_name):
@@ -374,7 +408,9 @@ def _serve_fixture(monkeypatch, datacenter, variant, fetch_name):
 
 
 @pytest.mark.parametrize(
-    "datacenter,variant,tool,fetch,count_key", BYID_CASES, ids=BYID_IDS,
+    "datacenter,variant,tool,fetch,count_key",
+    BYID_CASES,
+    ids=BYID_IDS,
 )
 def test_byid_serializes_real_provider_quakeml(
     monkeypatch, datacenter, variant, tool, fetch, count_key
@@ -382,9 +418,7 @@ def test_byid_serializes_real_provider_quakeml(
     _serve_fixture(monkeypatch, datacenter, variant, fetch)
     eventid = QUAKEML_EVENTS[datacenter]
 
-    out = json.loads(
-        run(getattr(server, tool)(eventid=eventid, datacenter=datacenter))
-    )
+    out = json.loads(run(getattr(server, tool)(eventid=eventid, datacenter=datacenter)))
 
     assert out["found"] is True
     assert out["datacenter"] == datacenter
@@ -433,13 +467,28 @@ def test_absent_subresource_is_explained_not_returned_empty(monkeypatch):
 @pytest.mark.parametrize(
     "datacenter,variant,parameter,tool,fetch",
     [
-        ("EMSC", "allmagnitudes", "includeallmagnitudes",
-         "fdsn_get_allmagnitudes_by_id", "get_allmagnitudes_by_id"),
+        (
+            "EMSC",
+            "allmagnitudes",
+            "includeallmagnitudes",
+            "fdsn_get_allmagnitudes_by_id",
+            "get_allmagnitudes_by_id",
+        ),
         # Same refusal reaches a second tool, because focalmechanism sends the same flag.
-        ("EMSC", "allmagnitudes", "includeallmagnitudes",
-         "fdsn_get_focalmechanism_by_id", "get_focalmechanism_by_id"),
-        ("USGS", "arrivals", "includearrivals",
-         "fdsn_get_arrivals_by_id", "get_arrivals_by_id"),
+        (
+            "EMSC",
+            "allmagnitudes",
+            "includeallmagnitudes",
+            "fdsn_get_focalmechanism_by_id",
+            "get_focalmechanism_by_id",
+        ),
+        (
+            "USGS",
+            "arrivals",
+            "includearrivals",
+            "fdsn_get_arrivals_by_id",
+            "get_arrivals_by_id",
+        ),
     ],
     ids=["EMSC-allmagnitudes", "EMSC-focalmechanism", "USGS-arrivals"],
 )
@@ -460,9 +509,11 @@ def test_provider_without_subresource_is_reported_not_crashed(
     monkeypatch.setattr(server, fetch, fake)
 
     out = json.loads(
-        run(getattr(server, tool)(
-            eventid=QUAKEML_EVENTS[datacenter], datacenter=datacenter
-        ))
+        run(
+            getattr(server, tool)(
+                eventid=QUAKEML_EVENTS[datacenter], datacenter=datacenter
+            )
+        )
     )
 
     assert out["error"] is True

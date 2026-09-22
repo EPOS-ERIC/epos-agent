@@ -12,13 +12,12 @@ import logging
 import os
 import re
 from enum import Enum
-from typing import Optional
 from urllib.parse import urlencode
 
 import requests
 from obspy import Catalog, UTCDateTime
 from obspy.clients.fdsn import Client
-from obspy.clients.fdsn.header import FDSNException, FDSNNoDataException, URL_MAPPINGS
+from obspy.clients.fdsn.header import URL_MAPPINGS, FDSNException, FDSNNoDataException
 from obspy.core.event import ResourceIdentifier
 
 logger = logging.getLogger(__name__)
@@ -32,8 +31,14 @@ class DatacenterError(Exception):
     Carries the datacenter's own message verbatim so it can be surfaced to the caller.
     """
 
-    def __init__(self, message: str, *, status: Optional[int] = None,
-                 datacenter: Optional[str] = None, api_url: Optional[str] = None):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        datacenter: str | None = None,
+        api_url: str | None = None,
+    ):
         super().__init__(message)
         self.message = message
         self.status = status
@@ -49,7 +54,9 @@ def _get_timeout() -> float:
     try:
         return float(raw)
     except ValueError:
-        logger.warning("Invalid FDSN_TIMEOUT=%r, using default %s", raw, DEFAULT_TIMEOUT)
+        logger.warning(
+            "Invalid FDSN_TIMEOUT=%r, using default %s", raw, DEFAULT_TIMEOUT
+        )
         return DEFAULT_TIMEOUT
 
 
@@ -99,24 +106,24 @@ def parse_fdsn_text(raw: str) -> tuple[list[str], list[list[str]]]:
 
 
 async def query_events_text(
-    starttime: Optional[str] = None,
-    endtime: Optional[str] = None,
-    minmag: Optional[float] = None,
-    maxmag: Optional[float] = None,
-    minlat: Optional[float] = None,
-    maxlat: Optional[float] = None,
-    minlon: Optional[float] = None,
-    maxlon: Optional[float] = None,
-    mindepth: Optional[float] = None,
-    maxdepth: Optional[float] = None,
-    latitude: Optional[float] = None,
-    longitude: Optional[float] = None,
-    minradiuskm: Optional[float] = None,
-    maxradiuskm: Optional[float] = None,
+    starttime: str | None = None,
+    endtime: str | None = None,
+    minmag: float | None = None,
+    maxmag: float | None = None,
+    minlat: float | None = None,
+    maxlat: float | None = None,
+    minlon: float | None = None,
+    maxlon: float | None = None,
+    mindepth: float | None = None,
+    maxdepth: float | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    minradiuskm: float | None = None,
+    maxradiuskm: float | None = None,
     limit: int = 100,
     offset: int = 1,
     orderby: str = "time",
-    updatedafter: Optional[str] = None,
+    updatedafter: str | None = None,
     datacenter: str = "INGV",
 ) -> tuple[list[str], list[list[str]], str]:
     """Query events as FDSN text and return (columns, rows, api_url).
@@ -133,13 +140,21 @@ async def query_events_text(
     if offset and offset > 1:
         params["offset"] = offset
     optional = {
-        "starttime": starttime, "endtime": endtime, "updatedafter": updatedafter,
-        "minmagnitude": minmag, "maxmagnitude": maxmag,
-        "minlatitude": minlat, "maxlatitude": maxlat,
-        "minlongitude": minlon, "maxlongitude": maxlon,
-        "mindepth": mindepth, "maxdepth": maxdepth,
-        "latitude": latitude, "longitude": longitude,
-        "minradiuskm": minradiuskm, "maxradiuskm": maxradiuskm,
+        "starttime": starttime,
+        "endtime": endtime,
+        "updatedafter": updatedafter,
+        "minmagnitude": minmag,
+        "maxmagnitude": maxmag,
+        "minlatitude": minlat,
+        "maxlatitude": maxlat,
+        "minlongitude": minlon,
+        "maxlongitude": maxlon,
+        "mindepth": mindepth,
+        "maxdepth": maxdepth,
+        "latitude": latitude,
+        "longitude": longitude,
+        "minradiuskm": minradiuskm,
+        "maxradiuskm": maxradiuskm,
     }
     params.update({k: v for k, v in optional.items() if v is not None})
 
@@ -151,15 +166,19 @@ async def query_events_text(
     except requests.RequestException as e:
         raise DatacenterError(
             f"Network error contacting datacenter '{datacenter}': {e}",
-            datacenter=datacenter, api_url=api_url,
+            datacenter=datacenter,
+            api_url=api_url,
         ) from e
 
     if resp.status_code in (204, 404):
         return [], [], api_url
     if resp.status_code >= 400:
         raise DatacenterError(
-            resp.text.strip() or f"HTTP {resp.status_code} from datacenter '{datacenter}'",
-            status=resp.status_code, datacenter=datacenter, api_url=api_url,
+            resp.text.strip()
+            or f"HTTP {resp.status_code} from datacenter '{datacenter}'",
+            status=resp.status_code,
+            datacenter=datacenter,
+            api_url=api_url,
         )
     return (*parse_fdsn_text(resp.text), api_url)
 
@@ -251,10 +270,14 @@ def _extract_event_id(event) -> str:
 # The FDSN include flags the by-id tools legitimately request. Used to tell a provider
 # that does not implement a subresource from a typo of ours: ObsPy reports both as the
 # same TypeError, so the parameter name is the only thing that distinguishes them.
-_INCLUDE_FLAGS = frozenset({"includearrivals", "includeallmagnitudes", "includeallorigins"})
+_INCLUDE_FLAGS = frozenset(
+    {"includearrivals", "includeallmagnitudes", "includeallorigins"}
+)
 
 
-async def _get_events_quakeml(eventid: str, datacenter: str, **extra) -> tuple[Catalog, str]:
+async def _get_events_quakeml(
+    eventid: str, datacenter: str, **extra
+) -> tuple[Catalog, str]:
     """Shared QuakeML fetch by event id for the detail tools.
 
     Raises DatacenterError on upstream HTTP/network failure, and on a provider that
@@ -298,29 +321,39 @@ async def _get_events_quakeml(eventid: str, datacenter: str, **extra) -> tuple[C
     return (catalog, api_url)
 
 
-async def get_event_by_id(eventid: str, datacenter: str = "INGV") -> tuple[Catalog, str]:
+async def get_event_by_id(
+    eventid: str, datacenter: str = "INGV"
+) -> tuple[Catalog, str]:
     """Fetch a single event by ID (basic info: preferred origin/magnitude, station
     magnitudes, amplitudes). Alternative origins/magnitudes/arrivals need the
     specialized tools."""
     return await _get_events_quakeml(eventid, datacenter)
 
 
-async def get_arrivals_by_id(eventid: str, datacenter: str = "INGV") -> tuple[Catalog, str]:
+async def get_arrivals_by_id(
+    eventid: str, datacenter: str = "INGV"
+) -> tuple[Catalog, str]:
     """Fetch a single event with all arrivals and picks."""
     return await _get_events_quakeml(eventid, datacenter, includearrivals=True)
 
 
-async def get_allmagnitudes_by_id(eventid: str, datacenter: str = "INGV") -> tuple[Catalog, str]:
+async def get_allmagnitudes_by_id(
+    eventid: str, datacenter: str = "INGV"
+) -> tuple[Catalog, str]:
     """Fetch a single event with all magnitude solutions."""
     return await _get_events_quakeml(eventid, datacenter, includeallmagnitudes=True)
 
 
-async def get_allorigins_by_id(eventid: str, datacenter: str = "INGV") -> tuple[Catalog, str]:
+async def get_allorigins_by_id(
+    eventid: str, datacenter: str = "INGV"
+) -> tuple[Catalog, str]:
     """Fetch a single event with all origin solutions."""
     return await _get_events_quakeml(eventid, datacenter, includeallorigins=True)
 
 
-async def get_focalmechanism_by_id(eventid: str, datacenter: str = "INGV") -> tuple[Catalog, str]:
+async def get_focalmechanism_by_id(
+    eventid: str, datacenter: str = "INGV"
+) -> tuple[Catalog, str]:
     """Fetch a single event with focal mechanism data.
 
     Uses includeallmagnitudes=True because moment tensors are linked to magnitudes.
