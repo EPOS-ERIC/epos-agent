@@ -5,16 +5,18 @@ description: Generates deterministic scientific plots for saved EPOS datasets fr
 
 # Deterministic EPOS visualization
 
-Load `analysis` and work only inside the active study bundle. Prefer the saved `analysis.py`; the notebook must import it rather than duplicate its logic.
+Load `analysis` and work only inside the active study bundle. Call `epos_prepare_visualization`, run the saved `analysis.py` with `epos_run_python`, and use `epos_finalize_notebook` only if the researcher requests the notebook. Do not reproduce the reusable plotting library in a tool call or notebook.
 
 ## Requirements and defaults
 
-CRITICAL: Whenever you create a jupyter notebook, you MUST include a `requirements.txt` file in the study bundle with all the required libraries (e.g. `matplotlib`, `pandas`). Furthermore, the VERY FIRST CELL of the notebook MUST execute a script to install them (e.g. `!pip install -r requirements.txt` or `!pip install matplotlib pandas`). Do not rely on global system packages; assume the environment is completely bare. This is mandatory to prevent `ModuleNotFoundError`.
-Create or propose the creation of the Jupyter Notebook ONLY if explicitly requested by the user, or only AT THE END of the workflow, after having successfully validated the analysis/plot in Python (`analysis.py`). Do not create the notebook at the beginning of the task.
+Never hand-write `requirements.txt` or guess dependencies. `epos_finalize_notebook` must derive them from the actual imports and resolved visualization features, and must reject unmapped third-party imports. The generated notebook installs that file in its first cell with `%pip install -r requirements.txt`.
+Create or propose the Jupyter Notebook only when explicitly requested, at the end of the workflow, after successfully validating `analysis.py`. Do not create a placeholder notebook at the beginning of the study.
 
 **Workflow ordering:** The agent must NEVER propose visualization or analysis options (plots, maps, scatter) before physically acquiring the data. Make your graphical proposals only based on the nature and quantity of the data just downloaded and verified.
 
 Use the study context, scientific question, confirmed filters and dataset metadata already present in state. Ask a question only when the requested scientific comparison remains ambiguous. Never ask for coordinates when a selected resource or saved dataset already provides a bounding box, point geometry or coordinate columns.
+
+Use automatic field and plot detection by default. Pass dataset mappings or plot overrides to `epos_prepare_visualization` only when metadata resolves an ambiguity or the researcher explicitly requests a comparison. The standard path produces a compact `visualization.json`, not generated plotting code.
 
 Do not use a hardcoded place, center, extent, layer, CRS, endpoint or time range. Derive them from, in order:
 
@@ -44,8 +46,10 @@ Choose the smallest set that answers the scientific question:
 - gridded coverage: raster or contour plot using declared axes and CRS;
 - OGC map layer: render the declared layer for the confirmed extent, then overlay compatible saved observations when requested.
 
+Interactive maps use the token-free OpenStreetMap and NASA GIBS layers supplied by the reusable library. Satellite imagery is visual context rather than scientific data. Preserve provider attribution, and accept the library's coordinate-grid fallback when remote tiles are unavailable.
+
 Label axes with units from metadata when available. Keep missing or invalid records out of the plotted subset but report how many were excluded. Automated observations are preliminary and must remain distinct from scientific validation.
 
 ## Outputs
 
-Save figures under `figures/`, reusable plotting logic in `analysis.py`, parameters and source paths in `parameters.json`, and provenance in `provenance.json`. Prefer PNG for a portable preview and SVG when a vector result is appropriate. Report absolute output paths and display an image inline when supported.
+Save figures and interactive HTML maps under `figures/`, configuration in `visualization.json`, detected fields and exclusions in `analysis-report.json`, parameters in `parameters.json`, and provenance in `provenance.json`. Report absolute output paths and display a PNG inline when supported.

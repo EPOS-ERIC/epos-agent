@@ -23,7 +23,7 @@ From the repository directory:
 ~/epos-agent/bin/epos-agent
 ```
 
-The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, creates isolated Python environments for the bundled EPOS MCP under `services/mcp-epos` and the FDSN MCP, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
+The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, creates isolated Python environments for the bundled services and reusable visualization pipeline, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
 
 To test another installation location without touching an existing installation:
 
@@ -44,7 +44,9 @@ The catalogue adapter traverses all result pages internally, deduplicates candid
 
 ## Guided study workflow
 
-New studies follow a provider-neutral workflow: context card, scientific question, service selection, three targeted analysis/plot suggestions plus “Valuta altre opzioni”, one data-acquisition confirmation, preliminary visualization, Python script and Jupyter notebook. Missing essentials are collected in one compact question block. Each study is stored as a self-contained bundle under `~/epos-agent/workspace/<study>-<timestamp>/`; use `/workspace` to see the active bundle and recent artifacts.
+New studies follow a provider-neutral workflow: context card, scientific question, service selection, three targeted analysis/plot suggestions plus “Valuta altre opzioni”, one data-acquisition confirmation, preliminary visualization and reusable Python analysis. Missing essentials are collected in one compact question block. Each study is stored as a self-contained bundle under `~/epos-agent/workspace/<study>-<timestamp>/`; a dependency-complete Jupyter notebook is finalized only when requested and only after the analysis succeeds.
+
+Standard plots use the bundled `epos_viz` library and a compact `visualization.json` instead of regenerating plotting code. Geographic data produces an interactive Folium/Leaflet map and a static PNG; OpenStreetMap and NASA GIBS provide token-free map layers with attribution and a coordinate-grid fallback. `requirements.txt` is derived from actual imports and selected optional features rather than guessed by the model.
 
 ## Security and runtime data
 

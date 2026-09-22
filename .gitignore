@@ -16,6 +16,7 @@ config/profile.env
 **/__pycache__/
 **/*.py[cod]
 **/*.egg-info/
+.ruff_cache
 
 # Local secrets and editor files
 .env

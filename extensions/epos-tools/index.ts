@@ -1,6 +1,6 @@
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { access, appendFile, copyFile, mkdir, open, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { access, appendFile, cp, copyFile, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
@@ -14,6 +14,10 @@ const EPOS_MCP_PYTHON = join(ROOT, "services", "mcp-epos", ".venv", "bin", "pyth
 const EPOS_MCP_SERVER = join(ROOT, "services", "mcp-epos", "tools", "epos_mcp_stdio.py");
 const EPOS_MCP_ARTIFACTS = resolve(ROOT, "services", "mcp-epos", "artifacts");
 const WORKSPACE = resolve(ROOT, "workspace");
+const VISUALIZATION_ROOT = resolve(ROOT, "visualization");
+const VISUALIZATION_TEMPLATE = join(VISUALIZATION_ROOT, "templates");
+const ANALYSIS_ENV = join(VISUALIZATION_ROOT, ".venv");
+const ANALYSIS_PYTHON = join(ANALYSIS_ENV, "bin", "python");
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const FDSN_PAGE_SIZE = 1000;
 const FDSN_SAMPLE_SIZE = 5;
@@ -44,6 +48,7 @@ type StudyState = {
   budgetBytes: number;
   downloadedBytes: number;
   createdAt: string;
+  visualizationVersion?: 1;
 };
 type ConversationState = {
   version: 2;
@@ -63,6 +68,45 @@ function emptyConversationState(): ConversationState {
 }
 
 let runtimeConversationState = emptyConversationState();
+
+function withoutEmptyValues(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const values = value.map(withoutEmptyValues).filter(item => item !== undefined);
+    return values.length ? values : undefined;
+  }
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value)
+      .map(([key, item]) => [key, withoutEmptyValues(item)] as const)
+      .filter(([, item]) => item !== undefined);
+    return entries.length ? Object.fromEntries(entries) : undefined;
+  }
+  if (value === undefined || value === null || value === "") return undefined;
+  return value;
+}
+
+function modelConversationState(state: ConversationState) {
+  const study = state.study;
+  return withoutEmptyValues({
+    intent: state.intent,
+    domain: state.domain,
+    filters: state.filters,
+    selectedResourceId: state.selectedResourceId,
+    format: state.format,
+    files: state.files,
+    study: study ? {
+      id: study.id,
+      title: study.title,
+      bundlePath: study.bundlePath,
+      context: study.context,
+      scientificQuestion: study.scientificQuestion,
+      phase: study.phase,
+      services: study.services,
+      confirmed: study.confirmed,
+      budgetBytes: study.budgetBytes,
+      downloadedBytes: study.downloadedBytes,
+    } : undefined,
+  }) || {};
+}
 
 function stateValue(value: unknown): StateValue | undefined {
   if (typeof value === "string") return value.slice(0, 200);
@@ -121,6 +165,7 @@ function storedConversationState(data: unknown): ConversationState | undefined {
         budgetBytes: MAX_DOWNLOAD_BYTES,
         downloadedBytes: Math.max(0, Number(study.downloadedBytes) || 0),
         createdAt: typeof study.createdAt === "string" ? study.createdAt : now(),
+        visualizationVersion: study.visualizationVersion === 1 ? 1 : undefined,
       };
     }
   }
@@ -311,8 +356,22 @@ function nextConversationState(current: ConversationState, event: any): Conversa
     return withArtifacts({
       ...current,
       intent: "analyze_data",
-      study: current.study ? { ...current.study, phase: input.outputImagePath ? "visualization" : "code" } : undefined,
-    }, payload.script, payload.outputLog, input.outputImagePath);
+      study: current.study ? { ...current.study, phase: input.outputImagePath || payload.outputs?.length ? "visualization" : "code" } : undefined,
+    }, payload.script, payload.reportPath, payload.outputLog, input.outputImagePath, ...(Array.isArray(payload.outputs) ? payload.outputs : []));
+  }
+  if (event.toolName === "epos_prepare_visualization") {
+    return withArtifacts({
+      ...current,
+      intent: "analyze_data",
+      study: current.study ? { ...current.study, phase: "code" } : undefined,
+    }, payload.analysisPath, payload.configPath);
+  }
+  if (event.toolName === "epos_finalize_notebook") {
+    return withArtifacts({
+      ...current,
+      intent: "analyze_data",
+      study: current.study ? { ...current.study, phase: "complete" } : undefined,
+    }, payload.notebookPath, payload.requirementsPath, payload.reportPath);
   }
   if (event.toolName === "epos_show_image") {
     return withArtifacts({ ...current, intent: "visualize_data" }, payload.path, input.path);
@@ -419,8 +478,8 @@ async function logProvenance(record: Record<string, unknown>) {
   await writeFile(file, JSON.stringify(record, null, 2));
   return file;
 }
-function modelResult(payload: unknown) {
-  const serialized = JSON.stringify(payload);
+function modelResult(payload: unknown, modelPayload: unknown = payload) {
+  const serialized = JSON.stringify(modelPayload);
   if (serialized.length <= MODEL_RESULT_LIMIT) return { content: [{ type: "text" as const, text: serialized }], details: payload };
   const compact = { truncatedInChat: true, characterCount: serialized.length, preview: serialized.slice(0, MODEL_RESULT_LIMIT) };
   return { content: [{ type: "text" as const, text: JSON.stringify(compact) }], details: payload };
@@ -429,7 +488,10 @@ async function resultWithProvenance(action: string, parameters: Record<string, u
   const source = payload?.provenance || {};
   const record = { action, timestamp: source.retrievedAt || now(), parameters, ...source };
   const provenanceFile = await logProvenance(record);
-  return modelResult({ ...payload, provenance: { ...record, provenanceFile } });
+  const result = { ...payload, provenance: { ...record, provenanceFile } };
+  const modelProvenance = withoutEmptyValues({ ...record, parameters: undefined });
+  const modelPayload = withoutEmptyValues({ ...payload, provenance: { ...(modelProvenance as object), provenanceFile } }) || {};
+  return modelResult(result, modelPayload);
 }
 function parseMcpPayload(result: any) {
   const text = result?.content?.find((item: any) => item.type === "text")?.text;
@@ -455,6 +517,59 @@ async function writeIfMissing(path: string, content: string) {
   catch { await writeFile(path, content); }
 }
 
+async function ensureVisualizationTemplate(bundlePath: string) {
+  await writeIfMissing(join(bundlePath, "analysis.py"), await readFile(join(VISUALIZATION_TEMPLATE, "analysis.py"), "utf8"));
+  const packagePath = join(bundlePath, "epos_viz");
+  try { await access(packagePath); }
+  catch { await cp(join(VISUALIZATION_TEMPLATE, "epos_viz"), packagePath, { recursive: true }); }
+  await writeIfMissing(join(bundlePath, "visualization.json"), JSON.stringify({
+    version: 1,
+    mode: "auto",
+    datasets: [],
+    basemap: "street",
+  }, null, 2) + "\n");
+}
+
+async function visualizationDataFiles(directory: string): Promise<string[]> {
+  const files: string[] = [];
+  let entries;
+  try { entries = await readdir(directory, { withFileTypes: true }); }
+  catch { return files; }
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) files.push(...await visualizationDataFiles(path));
+    else if (entry.isFile() && [".csv", ".json", ".jsonl", ".geojson", ".tif", ".tiff"].includes(extname(path).toLowerCase()) && !entry.name.includes(".partial.")) files.push(path);
+  }
+  return files.sort();
+}
+
+async function analysisPython() {
+  try {
+    await access(ANALYSIS_PYTHON);
+    return ANALYSIS_PYTHON;
+  } catch {
+    return "python3";
+  }
+}
+
+async function ensureAnalysisEnvironment(optionalDependencies: string[] = []) {
+  try { await access(ANALYSIS_PYTHON); }
+  catch {
+    await mkdir(VISUALIZATION_ROOT, { recursive: true });
+    await execFileAsync("python3", ["-m", "venv", ANALYSIS_ENV], { timeout: 120000 });
+  }
+  const modules = ["numpy", "pandas", "matplotlib", "folium", "xyzservices", ...optionalDependencies];
+  try {
+    await execFileAsync(ANALYSIS_PYTHON, ["-c", `import ${modules.join(", ")}`], { timeout: 30000 });
+  } catch {
+    await execFileAsync(ANALYSIS_PYTHON, ["-m", "pip", "install", "-r", join(VISUALIZATION_ROOT, "requirements-core.txt"), ...optionalDependencies], {
+      timeout: 300000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  }
+  return ANALYSIS_PYTHON;
+}
+
 async function writeStudyDocuments(state: ConversationState) {
   const study = state.study;
   if (!study) return;
@@ -471,6 +586,7 @@ async function writeStudyDocuments(state: ConversationState) {
       scientificQuestion: study.scientificQuestion,
       phase: study.phase,
       createdAt: study.createdAt,
+      visualizationVersion: study.visualizationVersion,
       updatedAt: state.updatedAt,
     },
     services: study.services,
@@ -490,18 +606,11 @@ async function writeStudyDocuments(state: ConversationState) {
     catch { provenanceRecords.push({ provenanceFile: path, readable: false }); }
   }
   await writeFile(join(study.bundlePath, "provenance.json"), JSON.stringify({ records: provenanceRecords }, null, 2));
-  await writeFile(join(study.bundlePath, "README.md"), `# ${study.title}\n\n${study.context || "No context recorded."}\n\n## Scientific question\n\n${study.scientificQuestion || "Not yet defined."}\n\n## Reproduce\n\nRun \`python3 analysis.py\` from this directory or open \`${study.slug}.ipynb\`.\n\n## Completeness\n\nConsult \`manifest.json\` and \`provenance.json\` before scientific interpretation. Transport completeness does not by itself prove catalogue completeness.\n`);
-  await writeIfMissing(join(study.bundlePath, "analysis.py"), `#!/usr/bin/env python3\n\"\"\"Reproducible analysis entry point for this EPOS study.\"\"\"\nfrom pathlib import Path\n\nROOT = Path(__file__).resolve().parent\nDATA = ROOT / "data"\nFIGURES = ROOT / "figures"\n\ndef list_data_files():\n    return sorted(path for path in DATA.rglob("*") if path.is_file())\n\nif __name__ == "__main__":\n    for path in list_data_files():\n        print(path.relative_to(ROOT))\n`);
-  const notebook = {
-    cells: [
-      { cell_type: "markdown", metadata: {}, source: [`# ${study.title}\n`, `${study.scientificQuestion || "Scientific question not yet defined."}\n`] },
-      { cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["from analysis import list_data_files\n", "list_data_files()\n"] },
-    ],
-    metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" }, language_info: { name: "python", version: "3" } },
-    nbformat: 4,
-    nbformat_minor: 5,
-  };
-  await writeIfMissing(join(study.bundlePath, `${study.slug}.ipynb`), JSON.stringify(notebook, null, 2));
+  const reproduce = study.visualizationVersion === 1
+    ? "Run `analysis.py` through EPOS Agent. A notebook is generated only after the analysis succeeds."
+    : `Run \`python3 analysis.py\` from this directory or open \`${study.slug}.ipynb\`.`;
+  await writeFile(join(study.bundlePath, "README.md"), `# ${study.title}\n\n${study.context || "No context recorded."}\n\n## Scientific question\n\n${study.scientificQuestion || "Not yet defined."}\n\n## Reproduce\n\n${reproduce}\n\n## Completeness\n\nConsult \`manifest.json\` and \`provenance.json\` before scientific interpretation. Transport completeness does not by itself prove catalogue completeness.\n`);
+  if (study.visualizationVersion === 1) await ensureVisualizationTemplate(study.bundlePath);
 }
 
 function jsonlRow(columns: unknown, row: unknown) {
@@ -578,6 +687,7 @@ function createWorkflowTool() {
           budgetBytes: MAX_DOWNLOAD_BYTES,
           downloadedBytes: 0,
           createdAt: now(),
+          visualizationVersion: 1,
         };
         runtimeConversationState = {
           ...emptyConversationState(),
@@ -585,7 +695,7 @@ function createWorkflowTool() {
           filters: pickStateFilters(params.filters || {}, Object.keys(params.filters || {}).slice(0, 30)),
           study,
           files: [
-            join(bundlePath, "analysis.py"), join(bundlePath, `${slug}.ipynb`), join(bundlePath, "README.md"),
+            join(bundlePath, "analysis.py"), join(bundlePath, "visualization.json"), join(bundlePath, "README.md"),
             join(bundlePath, "manifest.json"), join(bundlePath, "parameters.json"), join(bundlePath, "provenance.json"),
           ],
           updatedAt: now(),
@@ -618,7 +728,19 @@ function createWorkflowTool() {
         }
       }
       await writeStudyDocuments(runtimeConversationState);
-      return modelResult({ state: runtimeConversationState, workspace: runtimeConversationState.study?.bundlePath });
+      const result = { state: runtimeConversationState, workspace: runtimeConversationState.study?.bundlePath };
+      const study = runtimeConversationState.study;
+      return modelResult(result, {
+        action,
+        studyId: study?.id,
+        phase: study?.phase,
+        confirmed: study?.confirmed,
+        serviceCount: study?.services.length,
+        budgetBytes: study?.budgetBytes,
+        downloadedBytes: study?.downloadedBytes,
+        remainingBytes: study ? Math.max(0, study.budgetBytes - study.downloadedBytes) : undefined,
+        workspace: study?.bundlePath,
+      });
     },
   });
 }
@@ -919,6 +1041,118 @@ const nativeEposFetchTool = defineTool({
   async execute(_id: string, args: any) { return executeEposProxy("epos_fetch", args, args.metadataOnly); }
 });
 
+const visualizationDatasetShape = Type.Object({
+  path: Type.String({ description: "Dataset path inside the active study bundle" }),
+  label: Type.Optional(Type.String()),
+  mapping: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Optional field overrides such as latitude, longitude, time, value, values, x and y" })),
+  units: Type.Optional(Type.Record(Type.String(), Type.String())),
+  plots: Type.Optional(Type.Array(StringEnum(["distribution", "scatter"] as const))),
+});
+
+const visualizationWmsShape = Type.Object({
+  url: Type.String(),
+  layers: Type.String(),
+  attribution: Type.String(),
+  name: Type.Optional(Type.String()),
+  format: Type.Optional(Type.String()),
+});
+
+const prepareVisualizationTool = defineTool({
+  name: "epos_prepare_visualization",
+  label: "EPOS Prepare Visualization",
+  description: "Prepare the reusable analysis runner for downloaded study data. Auto-detect fields by default; provide only genuine overrides.",
+  parameters: Type.Object({
+    datasets: Type.Optional(Type.Array(visualizationDatasetShape)),
+    basemap: Type.Optional(StringEnum(["street", "satellite", "none"] as const)),
+    wms: Type.Optional(Type.Array(visualizationWmsShape)),
+  }),
+  async execute(_id, params: any) {
+    const study = runtimeConversationState.study;
+    if (!study) throw new Error("Start a study before preparing a visualization.");
+    if (study.visualizationVersion !== 1) throw new Error("Reusable visualization templates apply only to studies created after this update.");
+    if (!["download", "code", "visualization"].includes(study.phase)) {
+      throw new Error("Download study data before preparing a visualization.");
+    }
+    await ensureVisualizationTemplate(study.bundlePath);
+    const datasets = Array.isArray(params.datasets) ? params.datasets.map((item: any) => {
+      const path = resolveWorkspacePath(item.path, study.bundlePath);
+      if (path !== study.bundlePath && !path.startsWith(study.bundlePath + sep)) {
+        throw new Error(`Visualization dataset must be inside ${study.bundlePath}`);
+      }
+      return { ...item, path: relative(study.bundlePath, path) };
+    }) : [];
+    const basemap = ["street", "satellite", "none"].includes(params.basemap) ? params.basemap : "street";
+    const config = { version: 1, mode: "auto", datasets, basemap, wms: Array.isArray(params.wms) ? params.wms : [] };
+    const configPath = join(study.bundlePath, "visualization.json");
+    await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
+    const detectedFiles = await visualizationDataFiles(join(study.bundlePath, "data"));
+    const configuredFiles = datasets.map((item: any) => join(study.bundlePath, item.path));
+    const rasterRequested = [...detectedFiles, ...configuredFiles].some(path => [".tif", ".tiff"].includes(extname(path).toLowerCase()));
+    const optionalDependencies = [
+      ...(basemap === "satellite" ? ["contextily", "rasterio", "pyproj"] : []),
+      ...(rasterRequested ? ["rasterio"] : []),
+    ];
+    await ensureAnalysisEnvironment([...new Set(optionalDependencies)]);
+    return modelResult({
+      analysisPath: join(study.bundlePath, "analysis.py"),
+      configPath,
+      detectedFiles,
+      basemap,
+      optionalDependencies,
+    }, {
+      prepared: true,
+      analysisPath: join(study.bundlePath, "analysis.py"),
+      configPath,
+      datasetCount: datasets.length || detectedFiles.length,
+      autoDiscovery: datasets.length === 0,
+      basemap,
+    });
+  },
+});
+
+const finalizeNotebookTool = defineTool({
+  name: "epos_finalize_notebook",
+  label: "EPOS Finalize Notebook",
+  description: "Create the study notebook and complete requirements only after analysis.py has run successfully.",
+  parameters: Type.Object({}),
+  async execute() {
+    const study = runtimeConversationState.study;
+    if (!study) throw new Error("Start a study before finalizing a notebook.");
+    if (study.visualizationVersion !== 1) throw new Error("Notebook finalization applies only to studies created after this update.");
+    const reportPath = join(study.bundlePath, "analysis-report.json");
+    try { await access(reportPath); }
+    catch { throw new Error("Run analysis.py successfully before finalizing the notebook."); }
+    const python = await ensureAnalysisEnvironment();
+    await execFileAsync(python, [join(VISUALIZATION_ROOT, "sync_requirements.py"), study.bundlePath], {
+      cwd: study.bundlePath,
+      timeout: 60000,
+      maxBuffer: 1024 * 1024,
+    });
+    const requirementsPath = join(study.bundlePath, "requirements.txt");
+    const notebookPath = join(study.bundlePath, `${study.slug}.ipynb`);
+    const notebook = {
+      cells: [
+        { id: "install-dependencies", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["%pip install -r requirements.txt\n"] },
+        { id: "study-context", cell_type: "markdown", metadata: {}, source: [`# ${study.title}\n`, `${study.scientificQuestion || "Scientific question not yet defined."}\n`] },
+        { id: "run-analysis", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["from analysis import main\n", "report = main()\n", "report\n"] },
+        { id: "display-outputs", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: [
+          "from pathlib import Path\n",
+          "from IPython.display import Image, Markdown, display\n",
+          "for output in report['outputs']:\n",
+          "    path = Path(output)\n",
+          "    link = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path\n",
+          "    display(Image(filename=str(path))) if path.suffix.lower() == '.png' else display(Markdown(f'[{path.name}]({link.as_posix()})'))\n",
+        ] },
+      ],
+      metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" }, language_info: { name: "python", version: "3" } },
+      nbformat: 4,
+      nbformat_minor: 5,
+    };
+    await writeFile(notebookPath, JSON.stringify(notebook, null, 2) + "\n");
+    return modelResult({ notebookPath, requirementsPath, reportPath }, { finalized: true, notebookPath, requirementsPath });
+  },
+});
+
 const runPythonTool = defineTool({
   name: "epos_run_python",
   label: "EPOS Run Python",
@@ -946,10 +1180,15 @@ const runPythonTool = defineTool({
     }
     const timeout = Math.max(1000, Math.min(Number(params.timeoutMs || 60000), 300000));
     const args = Array.isArray(params.args) ? params.args : [];
+    const expectedReportPath = !temporaryScript && resolve(script) === join(executionDirectory, "analysis.py")
+      ? join(executionDirectory, "analysis-report.json")
+      : undefined;
+    if (expectedReportPath) await unlink(expectedReportPath).catch(() => {});
     let stdout = "";
     let stderr = "";
+    const python = await analysisPython();
     try {
-      ({ stdout, stderr } = await execFileAsync("python3", [script, ...args], {
+      ({ stdout, stderr } = await execFileAsync(python, [script, ...args], {
         cwd: executionDirectory,
         timeout,
         maxBuffer: 10 * 1024 * 1024,
@@ -959,9 +1198,18 @@ const runPythonTool = defineTool({
     } finally {
       if (temporaryScript) await unlink(script).catch(() => {});
     }
-    const record = { action: "run-python", timestamp: now(), workspace: executionDirectory, script: temporaryScript ? undefined : script, generatedCode: temporaryScript, args, timeoutMs: timeout, stdoutBytes: stdout.length, stderrBytes: stderr.length, outputImagePath: params.outputImagePath };
+    let outputs: string[] = [];
+    let reportPath: string | undefined;
+    if (expectedReportPath) {
+      try {
+        reportPath = expectedReportPath;
+        const report = JSON.parse(await readFile(reportPath, "utf8"));
+        outputs = Array.isArray(report.outputs) ? report.outputs.filter((path: unknown): path is string => typeof path === "string") : [];
+      } catch { reportPath = undefined; }
+    }
+    const record = { action: "run-python", timestamp: now(), workspace: executionDirectory, script: temporaryScript ? undefined : script, generatedCode: temporaryScript, args, timeoutMs: timeout, stdoutBytes: stdout.length, stderrBytes: stderr.length, outputImagePath: params.outputImagePath, reportPath, outputs };
     const provenanceFile = await logProvenance(record);
-    const fullResult = { provenance: { ...record, provenanceFile }, stdout, stderr };
+    const fullResult = { provenance: { ...record, provenanceFile }, stdout, stderr, reportPath, outputs };
     const serialized = JSON.stringify(fullResult);
     let outputLog: string | undefined;
     let chatResult: unknown = fullResult;
@@ -1214,7 +1462,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
   description: ["epos_details", "epos_select_candidate", "epos_inspect", "epos_visualize"],
   download: ["epos_prepare_execute", "epos_execute", "epos_fetch"],
   seismology: ["epos_fdsnws_event_call"],
-  analysis: ["read", "epos_run_python", "epos_show_image"],
+  analysis: ["read", "epos_prepare_visualization", "epos_run_python", "epos_finalize_notebook", "epos_show_image"],
   workspace: ["read", "write", "edit", "ls", "find", "grep"],
 };
 
@@ -1239,7 +1487,7 @@ function createLoadToolsTool(pi: ExtensionAPI) {
       const requested = TOOL_GROUPS[params.capability] || [];
       const activeTools = [...new Set([...BASE_TOOLS, ...requested])].filter(name => available.has(name));
       pi.setActiveTools(activeTools);
-      return modelResult({ capability: params.capability, activeTools });
+      return modelResult({ capability: params.capability, activeTools }, { capability: params.capability, loaded: true });
     },
   });
 }
@@ -1261,7 +1509,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_tree", async (_event, ctx) => { runtimeConversationState = restoreConversationState(ctx); });
   pi.on("before_agent_start", async (event) => {
     resetTools(pi);
-    const stateBlock = `<epos-conversation-state>\nCurrent workflow state: ${JSON.stringify(runtimeConversationState)}\nReuse confirmed values when relevant. New user instructions take precedence; never invent missing values.\n</epos-conversation-state>`;
+    const stateBlock = `<epos-conversation-state>\nCurrent workflow state: ${JSON.stringify(modelConversationState(runtimeConversationState))}\nReuse confirmed values when relevant. New user instructions take precedence; never invent missing values.\n</epos-conversation-state>`;
     const systemPrompt = event.systemPrompt.replace(/\n*<epos-conversation-state>[\s\S]*?<\/epos-conversation-state>/g, "");
     return { systemPrompt: `${systemPrompt}\n\n${stateBlock}` };
   });
@@ -1345,7 +1593,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(nativeEposInspectTool);
   pi.registerTool(nativeEposVisualizeTool);
   pi.registerTool(nativeEposFetchTool);
+  pi.registerTool(prepareVisualizationTool);
   pi.registerTool(runPythonTool);
+  pi.registerTool(finalizeNotebookTool);
   pi.registerTool(showImageTool);
   pi.registerTool(fdsnMcpTool);
 }

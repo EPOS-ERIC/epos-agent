@@ -64,7 +64,7 @@ pertinenti alla domanda corrente.
 | `skills/epos-search/SKILL.md` | Istruzioni progressive per la discovery di catalogo, provider e software. |
 | `skills/epos-service-access/SKILL.md` | Istruzioni per descrizione, parametri, preventivo e download di un elemento già scelto. |
 | `skills/epos-fdsn-earthquakes/SKILL.md` | Istruzioni per gli eventi sismici FDSN. |
-| `PROJECT_STATUS.md` | Stato funzionale, verifiche già eseguite e backlog. |
+| `docs/status.md` | Stato funzionale, verifiche già eseguite e backlog. |
 | `install.sh` | Installa una copia del progetto in `~/epos-agent`, dipendenze Pi/Node/Python e i server MCP. |
 | `workspace/` | Dati completi, script e immagini prodotti durante le sessioni; non è contesto del modello. |
 | `logs/provenance/` | Un file JSON per operazione con fonte, parametri e timestamp. |
@@ -426,14 +426,14 @@ Al momento della stesura il worktree contiene modifiche a:
 README.md
 bin/epos-agent
 config/profile.env.example
-docs/implementation-plan.md
+docs/architecture-v0.2.md
 extensions/epos-tools/index.ts
 prompts/SYSTEM.md
 services/mcp-epos/requirements.txt
 services/mcp-epos/tools/epos_mcp_http.py
 services/mcp-epos/tools/epos_mcp_stdio.py
 skills/epos/SKILL.md                  (eliminato)
-PROJECT_STATUS.md                     (nuovo)
+docs/status.md                        (nuovo)
 services/mcp-epos/definitions/        (nuova)
 skills/epos-fdsn-earthquakes/         (nuova)
 skills/epos-search/                   (nuova)
@@ -454,7 +454,7 @@ progressive”:
 | MCP EPOS | Aggiunto `search_organizations` con input/output compatti, filtro/ranking/deduplica locali e massimo cinque risultati. |
 | MCP EPOS | Corretto `search_resources`: dominio preservato nel flattening, deduplica per ID, filtro locale `scienceDomains`, ranking prima della paginazione, `status` facoltativo e indicazione dei filtri locali. |
 | Contratto | Copiato l'OpenAPI fornito in `services/mcp-epos/definitions/api-spec.json`, fuori dal contesto dell'agente. |
-| Stato | Aggiornato `PROJECT_STATUS.md` con architettura, risultati e backlog. |
+| Stato | Aggiornato `docs/status.md` con architettura, risultati e backlog. |
 
 Non è stato aggiunto alcun accesso a `/resources/organizations/full`; non sono
 stati creati test, fixture o artefatti permanenti per questa modifica.
@@ -468,7 +468,7 @@ conversazionale, provenance e telemetria. Questa guida descrive il loro
 funzionamento perché sono già parte del comportamento locale; Git da solo non
 permette però di attribuirle tutte al singolo intervento sulla search.
 
-`README.md` e `docs/implementation-plan.md` aggiornano la documentazione verso
+`README.md` e `docs/architecture-v0.2.md` aggiornano la documentazione verso
 questa architettura. `package.json` e lockfile portano il server MCP alla
 versione 0.2.0 e aggiornano la dipendenza SDK MCP. Il file
 `config/profile.env.example` elimina il default provider/modello e documenta le
