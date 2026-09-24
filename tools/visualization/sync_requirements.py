@@ -42,7 +42,7 @@ def imported_modules(paths: list[Path]) -> set[str]:
 
 
 def requirements_for_bundle(bundle: Path) -> list[str]:
-    sources = [bundle / "analysis.py", *sorted((bundle / "epos_viz").rglob("*.py"))]
+    sources = [bundle / "code" / "analysis.py", *sorted((bundle / "code" / "epos_viz").rglob("*.py"))]
     sources = [path for path in sources if path.exists()]
     if not sources:
         raise ValueError("No analysis.py or epos_viz sources were found")
@@ -52,7 +52,7 @@ def requirements_for_bundle(bundle: Path) -> list[str]:
     if unknown:
         raise ValueError(f"Unmapped third-party imports: {', '.join(unknown)}")
     distributions = {IMPORT_TO_DISTRIBUTION[module] for module in modules if module in IMPORT_TO_DISTRIBUTION}
-    report_path = bundle / "analysis-report.json"
+    report_path = bundle / "metadata" / "analysis-report.json"
     if report_path.exists():
         report = json.loads(report_path.read_text(encoding="utf-8"))
         for dependency in report.get("dependencies", []):
@@ -75,8 +75,8 @@ def main() -> None:
     args = parser.parse_args()
     bundle = args.bundle.resolve()
     requirements = requirements_for_bundle(bundle)
-    (bundle / "requirements.txt").write_text("\n".join(requirements) + "\n", encoding="utf-8")
-    print(json.dumps({"requirements": requirements, "path": str(bundle / "requirements.txt")}))
+    (bundle / "notebooks" / "requirements.txt").write_text("\n".join(requirements) + "\n", encoding="utf-8")
+    print(json.dumps({"requirements": requirements, "path": str(bundle / "notebooks" / "requirements.txt")}))
 
 
 if __name__ == "__main__":

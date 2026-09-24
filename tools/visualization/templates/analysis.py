@@ -10,15 +10,15 @@ from epos_viz import run
 
 
 def main() -> dict:
-    return run(Path(__file__).resolve().parent)
+    return run(Path(__file__).resolve().parent.parent)
 
 
 if __name__ == "__main__":
-    bundle = Path(__file__).resolve().parent
+    bundle = Path(__file__).resolve().parent.parent
     report = main()
     print(json.dumps({
         "datasets": len(report["datasets"]),
         "outputs": report["outputs"],
         "warnings": report["warnings"],
-        "report": str(bundle / "analysis-report.json"),
+        "report": str(bundle / "metadata" / "analysis-report.json"),
     }))

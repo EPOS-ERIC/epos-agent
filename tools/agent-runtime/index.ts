@@ -12,8 +12,6 @@ const PYTHON_EXECUTABLE = process.platform === "win32" ? "python.exe" : "python"
 const FDSN_EXECUTABLE = process.platform === "win32" ? "mcp-fdsnws-event-server.exe" : "mcp-fdsnws-event-server";
 const SYSTEM_PYTHON = process.platform === "win32" ? "py" : "python3";
 const SYSTEM_PYTHON_ARGUMENTS = process.platform === "win32" ? ["-3"] : [];
-const PROV_DIR = join(ROOT, "logs", "provenance");
-const TOKEN_LOG = join(ROOT, "logs", "token-usage.jsonl");
 const FDSN_CMD = join(ROOT, "services", "mcp-fdsnws-event", ".venv", VENV_EXECUTABLE_DIRECTORY, FDSN_EXECUTABLE);
 const EPOS_MCP_PYTHON = join(ROOT, "services", "mcp-epos", ".venv", VENV_EXECUTABLE_DIRECTORY, PYTHON_EXECUTABLE);
 const EPOS_MCP_SERVER = join(ROOT, "services", "mcp-epos", "tools", "epos_mcp_stdio.py");
@@ -64,13 +62,13 @@ type ConversationState = {
   selectedResourceId?: string;
   format?: string;
   files: string[];
-  provenanceFiles: string[];
+  provenanceRecords: Record<string, unknown>[];
   study?: StudyState;
   updatedAt: string;
 };
 
 function emptyConversationState(): ConversationState {
-  return { version: 2, filters: {}, files: [], provenanceFiles: [], updatedAt: now() };
+  return { version: 2, filters: {}, files: [], provenanceRecords: [], updatedAt: now() };
 }
 
 let runtimeConversationState = emptyConversationState();
@@ -153,7 +151,7 @@ function storedConversationState(data: unknown): ConversationState | undefined {
   state.updatedAt = typeof candidate.updatedAt === "string" ? candidate.updatedAt : state.updatedAt;
   state.filters = pickStateFilters(candidate.filters && typeof candidate.filters === "object" ? candidate.filters : {}, Object.keys(candidate.filters || {}).slice(0, 30));
   state.files = recentPaths([], ...(Array.isArray(candidate.files) ? candidate.files : []));
-  state.provenanceFiles = recentPaths([], ...(Array.isArray(candidate.provenanceFiles) ? candidate.provenanceFiles : []));
+  state.provenanceRecords = Array.isArray(candidate.provenanceRecords) ? candidate.provenanceRecords : [];
   if (candidate.version === 2 && candidate.study && typeof candidate.study === "object") {
     const study = candidate.study;
     const bundlePath = typeof study.bundlePath === "string" ? resolve(study.bundlePath) : "";
@@ -223,11 +221,11 @@ const FDSN_FILTER_KEYS = ["starttime", "endtime", "updatedafter", "minmag", "max
 function nextConversationState(current: ConversationState, event: any): ConversationState | undefined {
   const input = (event.input || {}) as Record<string, any>;
   const payload = toolPayload(event);
-  const provenanceFile = payload?.provenance?.provenanceFile;
+  const provenanceRecord = payload?.provenance?.provenanceRecord;
   const withArtifacts = (state: ConversationState, ...files: unknown[]) => ({
     ...state,
     files: recentPaths(state.files, ...files),
-    provenanceFiles: recentPaths(state.provenanceFiles, provenanceFile),
+    provenanceRecords: provenanceRecord ? [...state.provenanceRecords, provenanceRecord].slice(-MAX_STATE_FILES) : state.provenanceRecords,
     updatedAt: now(),
   });
 
@@ -237,7 +235,7 @@ function nextConversationState(current: ConversationState, event: any): Conversa
     return {
       ...current,
       files: recentPaths(current.files, payload.outputFile),
-      provenanceFiles: recentPaths(current.provenanceFiles, payload.provenanceFile),
+      provenanceRecords: payload.provenanceRecord ? [...current.provenanceRecords, payload.provenanceRecord].slice(-MAX_STATE_FILES) : current.provenanceRecords,
       study: current.study ? {
         ...current.study,
         downloadedBytes: Math.min(current.study.budgetBytes, current.study.downloadedBytes + partialBytes),
@@ -479,10 +477,7 @@ async function imageBlock(path: string) {
 
 function now() { return new Date().toISOString(); }
 async function logProvenance(record: Record<string, unknown>) {
-  await mkdir(PROV_DIR, { recursive: true });
-  const file = join(PROV_DIR, `${new Date().toISOString().replace(/[:.]/g, "-")}-${record.action || "epos"}.json`);
-  await writeFile(file, JSON.stringify(record, null, 2));
-  return file;
+  return record;
 }
 function modelResult(payload: unknown, modelPayload: unknown = payload) {
   const serialized = JSON.stringify(modelPayload);
@@ -493,7 +488,7 @@ function modelResult(payload: unknown, modelPayload: unknown = payload) {
 async function resultWithProvenance(action: string, parameters: Record<string, unknown>, payload: any) {
   const source = payload?.provenance || {};
   const record = { action, timestamp: source.retrievedAt || now(), parameters, ...source };
-  const provenanceFile = await logProvenance(record);
+  const provenanceRecord = await logProvenance(record);
   const result = { ...payload, provenance: { ...record, provenanceFile } };
   const modelProvenance = withoutEmptyValues({ ...record, parameters: undefined });
   const modelPayload = withoutEmptyValues({ ...payload, provenance: { ...(modelProvenance as object), provenanceFile } }) || {};
@@ -524,12 +519,12 @@ async function writeIfMissing(path: string, content: string) {
 }
 
 async function ensureVisualizationTemplate(bundlePath: string) {
-  await writeIfMissing(join(bundlePath, "analysis.py"), await readFile(join(VISUALIZATION_TEMPLATE, "analysis.py"), "utf8"));
-  const packagePath = join(bundlePath, "epos_viz");
+  await writeIfMissing(join(bundlePath, "code", "analysis.py"), await readFile(join(VISUALIZATION_TEMPLATE, "analysis.py"), "utf8"));
+  const packagePath = join(bundlePath, "code", "epos_viz");
   try { await access(packagePath); }
   catch { await cp(join(VISUALIZATION_TEMPLATE, "epos_viz"), packagePath, { recursive: true }); }
-  await writeIfMissing(join(bundlePath, "visualization.schema.json"), await readFile(join(VISUALIZATION_TEMPLATE, "visualization.schema.json"), "utf8"));
-  await writeIfMissing(join(bundlePath, "visualization.json"), JSON.stringify({
+  await writeIfMissing(join(bundlePath, "code", "visualization.schema.json"), await readFile(join(VISUALIZATION_TEMPLATE, "visualization.schema.json"), "utf8"));
+  await writeIfMissing(join(bundlePath, "code", "visualization.json"), JSON.stringify({
     version: 2,
     recipe: { name: "custom" },
     datasets: [],
@@ -582,9 +577,15 @@ async function writeStudyDocuments(state: ConversationState) {
   const study = state.study;
   if (!study) return;
   const dataDirectory = join(study.bundlePath, "data");
+  const codeDirectory = join(study.bundlePath, "code");
   const figuresDirectory = join(study.bundlePath, "figures");
+  const notebooksDirectory = join(study.bundlePath, "notebooks");
+  const metadataDirectory = join(study.bundlePath, "metadata");
   await mkdir(dataDirectory, { recursive: true });
+  await mkdir(codeDirectory, { recursive: true });
   await mkdir(figuresDirectory, { recursive: true });
+  await mkdir(notebooksDirectory, { recursive: true });
+  await mkdir(metadataDirectory, { recursive: true });
   const manifest = {
     schemaVersion: 1,
     study: {
@@ -606,14 +607,14 @@ async function writeStudyDocuments(state: ConversationState) {
     },
     artifacts: state.files,
   };
-  await writeFile(join(study.bundlePath, "manifest.json"), JSON.stringify(manifest, null, 2));
-  await writeFile(join(study.bundlePath, "parameters.json"), JSON.stringify({ filters: state.filters, format: state.format }, null, 2));
+  await writeFile(join(study.bundlePath, "metadata", "manifest.json"), JSON.stringify(manifest, null, 2));
+  await writeFile(join(study.bundlePath, "metadata", "parameters.json"), JSON.stringify({ filters: state.filters, format: state.format }, null, 2));
   const provenanceRecords: unknown[] = [];
   for (const path of state.provenanceFiles) {
     try { provenanceRecords.push(JSON.parse(await readFile(path, "utf8"))); }
     catch { provenanceRecords.push({ provenanceFile: path, readable: false }); }
   }
-  await writeFile(join(study.bundlePath, "provenance.json"), JSON.stringify({ records: provenanceRecords }, null, 2));
+  await writeFile(join(study.bundlePath, "metadata", "provenance.json"), JSON.stringify({ records: provenanceRecords }, null, 2));
   const reproduce = study.visualizationVersion === 2
     ? "Run `analysis.py` through EPOS Agent. A notebook is generated only after the analysis succeeds."
     : `Run \`python3 analysis.py\` from this directory or open \`${study.slug}.ipynb\`.`;
@@ -703,8 +704,8 @@ function createWorkflowTool() {
           filters: pickStateFilters(params.filters || {}, Object.keys(params.filters || {}).slice(0, 30)),
           study,
           files: [
-            join(bundlePath, "analysis.py"), join(bundlePath, "visualization.json"), join(bundlePath, "README.md"),
-            join(bundlePath, "manifest.json"), join(bundlePath, "parameters.json"), join(bundlePath, "provenance.json"),
+            join(bundlePath, "code", "analysis.py"), join(bundlePath, "code", "visualization.json"), join(bundlePath, "README.md"),
+            join(bundlePath, "metadata", "manifest.json"), join(bundlePath, "metadata", "parameters.json"), join(bundlePath, "metadata", "provenance.json"),
           ],
           updatedAt: now(),
         };
@@ -1105,7 +1106,7 @@ const prepareVisualizationTool = defineTool({
     const interactive = params.interactive === true;
     const extent = Array.isArray(params.extent) && params.extent.length === 4 ? params.extent : undefined;
     const config = { version: 2, recipe: params.recipe, datasets, map: { basemap, topography, ...(extent ? { extent } : {}) }, interactive, wms: Array.isArray(params.wms) ? params.wms : [] };
-    const configPath = join(study.bundlePath, "visualization.json");
+    const configPath = join(study.bundlePath, "code", "visualization.json");
     await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
     const detectedFiles = await visualizationDataFiles(join(study.bundlePath, "data"));
     const configuredFiles = datasets.map((item: any) => join(study.bundlePath, item.path));
@@ -1124,7 +1125,7 @@ const prepareVisualizationTool = defineTool({
     ];
     await ensureAnalysisEnvironment([...new Set(optionalDependencies)]);
     return modelResult({
-      analysisPath: join(study.bundlePath, "analysis.py"),
+      analysisPath: join(study.bundlePath, "code", "analysis.py"),
       configPath,
       detectedFiles,
       basemap,
@@ -1132,7 +1133,7 @@ const prepareVisualizationTool = defineTool({
       optionalDependencies,
     }, {
       prepared: true,
-      analysisPath: join(study.bundlePath, "analysis.py"),
+      analysisPath: join(study.bundlePath, "code", "analysis.py"),
       configPath,
       datasetCount: datasets.length || detectedFiles.length,
       autoDiscovery: datasets.length === 0,
@@ -1151,7 +1152,7 @@ const finalizeNotebookTool = defineTool({
     const study = runtimeConversationState.study;
     if (!study) throw new Error("Start a study before finalizing a notebook.");
     if (study.visualizationVersion !== 2) throw new Error("Notebook finalization applies only to visualization v2 studies.");
-    const reportPath = join(study.bundlePath, "analysis-report.json");
+    const reportPath = join(study.bundlePath, "metadata", "analysis-report.json");
     try { await access(reportPath); }
     catch { throw new Error("Run analysis.py successfully before finalizing the notebook."); }
     const python = await ensureAnalysisEnvironment();
@@ -1160,13 +1161,13 @@ const finalizeNotebookTool = defineTool({
       timeout: 60000,
       maxBuffer: 1024 * 1024,
     });
-    const requirementsPath = join(study.bundlePath, "requirements.txt");
-    const notebookPath = join(study.bundlePath, `${study.slug}.ipynb`);
+    const requirementsPath = join(study.bundlePath, "notebooks", "requirements.txt");
+    const notebookPath = join(study.bundlePath, "notebooks", `${study.slug}.ipynb`);
     const notebook = {
       cells: [
         { id: "install-dependencies", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["%pip install -r requirements.txt\n"] },
         { id: "study-context", cell_type: "markdown", metadata: {}, source: [`# ${study.title}\n`, `${study.scientificQuestion || "Scientific question not yet defined."}\n`] },
-        { id: "run-analysis", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["from analysis import main\n", "report = main()\n", "report\n"] },
+        { id: "run-analysis", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["import sys\n", "sys.path.append('../code')\n", "from analysis import main\n", "report = main()\n", "report\n"] },
         { id: "display-outputs", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: [
           "from pathlib import Path\n",
           "from IPython.display import Image, Markdown, display\n",
@@ -1240,7 +1241,7 @@ const runPythonTool = defineTool({
       } catch { reportPath = undefined; }
     }
     const record = { action: "run-python", timestamp: now(), workspace: executionDirectory, script: temporaryScript ? undefined : script, generatedCode: temporaryScript, args, timeoutMs: timeout, stdoutBytes: stdout.length, stderrBytes: stderr.length, outputImagePath: params.outputImagePath, reportPath, outputs };
-    const provenanceFile = await logProvenance(record);
+    const provenanceRecord = await logProvenance(record);
     const fullResult = { provenance: { ...record, provenanceFile }, stdout, stderr, reportPath, outputs };
     const serialized = JSON.stringify(fullResult);
     let outputLog: string | undefined;
@@ -1479,7 +1480,7 @@ const fdsnMcpTool = defineTool({
         datasetCompleteness,
         coverage,
       };
-      const provenanceFile = await logProvenance(record);
+      const provenanceRecord = await logProvenance(record);
       return modelResult({ recordCount, pageCount, shardCount, splitCount, bytes, outputFile, complete: true, datasetCompleteness, coverage, sample, provenance: { ...record, provenanceFile } });
     } catch (error) {
       await file.close().catch(() => {});
@@ -1509,7 +1510,7 @@ const fdsnMcpTool = defineTool({
         coverage: { firstEventTime, lastEventTime, boundariesVerified: false },
         error: error instanceof Error ? error.message : String(error),
       };
-      const provenanceFile = await logProvenance(record);
+      const provenanceRecord = await logProvenance(record);
       throw new Error(JSON.stringify({ code: "FDSN_PARTIAL_DOWNLOAD", complete: false, datasetCompleteness: "partial", recordCount, pageCount, shardCount, splitCount, bytes, outputFile: retainedFile, provenanceFile, coverage: record.coverage, error: record.error }));
     }
   },
@@ -1590,8 +1591,7 @@ export default function (pi: ExtensionAPI) {
       total: usage.totalTokens,
       cost: usage.cost,
     };
-    await mkdir(join(ROOT, "logs"), { recursive: true });
-    await appendFile(TOKEN_LOG, JSON.stringify(record) + "\n");
+        await appendFile(TOKEN_LOG, JSON.stringify(record) + "\n");
   });
   pi.on("session_shutdown", async () => { await Promise.all([mcp.stop(), eposMcp.stop()]); });
   pi.on("tool_result", async (event) => {

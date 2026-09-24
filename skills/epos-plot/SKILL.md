@@ -5,7 +5,7 @@ description: Generates deterministic scientific plots for saved EPOS datasets fr
 
 # Deterministic EPOS visualization
 
-Load `analysis` and work only inside the active study bundle. Call `epos_prepare_visualization`, run the saved `analysis.py` with `epos_run_python`, and use `epos_finalize_notebook` only if the researcher requests the notebook. Do not reproduce the reusable plotting library in a tool call or notebook.
+Load `analysis` and work only inside the active study bundle. Call `epos_prepare_visualization`, run the saved `code/analysis.py` with `epos_run_python`, and use `epos_finalize_notebook` only if the researcher requests the notebook. Do not reproduce the reusable plotting library in a tool call or notebook.
 
 ## Requirements and defaults
 
