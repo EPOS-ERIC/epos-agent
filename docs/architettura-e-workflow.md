@@ -1,15 +1,5 @@
 # EPOS Agent: architettura locale, caricamento delle skill e modifiche in corso
 
-Questo documento descrive lo stato effettivo del repository locale al 16 settembre
-2026. Serve come guida tecnica del progetto e come fotografia del worktree prima
-di un commit.
-
-> Nota sull'attribuzione delle modifiche: Git mostra quali file sono diversi da
-> `HEAD`, ma non quando o da chi sia stata fatta ogni singola modifica non
-> committata. Per questo il capitolo “Modifiche locali” distingue le modifiche
-> introdotte nell'intervento sulla ricerca EPOS da quelle che erano già presenti
-> nel worktree e che costituiscono l'architettura attuale.
-
 ## 1. Obiettivo del progetto
 
 EPOS Agent è un'interfaccia conversazionale per trovare, descrivere, scaricare e
@@ -107,6 +97,8 @@ La skill originale ricevuta con il progetto citava strumenti come
 di questa codebase: erano riferimenti del progetto di provenienza della skill.
 Le sue regole utili sono state adattate ai tool Pi/MCP realmente disponibili;
 non si tenta di invocare quei tool inesistenti.
+
+## 4. Architettura delle skill e caricamento progressivo
 
 ### 4.1 Caricamento progressivo e costo in token
 
@@ -405,42 +397,7 @@ L'accesso ai servizi pubblici EPOS/FDSN è “open world” dal punto di vista M
 mentre le operazioni catalografiche e descrittive sono annotate read-only. Il
 download cambia il filesystem locale e perciò ha una policy più prudente.
 
-## 12. OpenAPI: dove si trova e come va usato
-
-Il file `services/mcp-epos/definitions/api-spec.json` è una copia locale
-dell'OpenAPI fornito per l'API EPOS. Non viene passato con `--skill`, non viene
-letto nel prompt di sistema e non serve all'agente per ogni query. È il contratto
-di riferimento per chi modifica `server.mjs`: endpoint, campi e tipi vanno
-confrontati lì prima di estendere l'MCP.
-
-Questo è diverso dalla skill: l'OpenAPI definisce l'interfaccia tecnica del
-server; la skill definisce il workflow conversazionale. Caricare circa 594 KB di
-specifica a ogni richiesta sarebbe uno spreco e aumenterebbe il rischio che il
-modello ragioni su dettagli non pertinenti.
-
-## 13. Modifiche locali non committate
-
-Al momento della stesura il worktree contiene modifiche a:
-
-```text
-README.md
-bin/epos-agent
-config/profile.env.example
-docs/architecture-v0.2.md
-tools/agent-runtime/index.ts
-prompts/SYSTEM.md
-services/mcp-epos/requirements.txt
-services/mcp-epos/tools/epos_mcp_http.py
-services/mcp-epos/tools/epos_mcp_stdio.py
-skills/epos/SKILL.md                  (eliminato)
-docs/status.md                        (nuovo)
-services/mcp-epos/definitions/        (nuova)
-skills/epos-fdsn-earthquakes/         (nuova)
-skills/epos-search/                   (nuova)
-skills/epos-service-access/           (nuova)
-```
-
-### 13.1 Intervento specifico sulla search EPOS
+## 12. Intervento specifico sulla search EPOS
 
 Queste sono le modifiche introdotte per il piano “EPOS search precisa con skill
 progressive”:
@@ -459,22 +416,7 @@ progressive”:
 Non è stato aggiunto alcun accesso a `/resources/organizations/full`; non sono
 stati creati test, fixture o artefatti permanenti per questa modifica.
 
-### 13.2 Altre evoluzioni locali che formano l'architettura attuale
-
-Le altre differenze non committate mostrano l'evoluzione verso la versione
-0.2.0: launcher provider-neutral, router a tool minimi, server MCP lazy,
-contratti `structuredContent`, download in streaming, FDSN multipagina, stato
-conversazionale, provenance e telemetria. Questa guida descrive il loro
-funzionamento perché sono già parte del comportamento locale; Git da solo non
-permette però di attribuirle tutte al singolo intervento sulla search.
-
-`README.md` e `docs/architecture-v0.2.md` aggiornano la documentazione verso
-questa architettura. `package.json` e lockfile portano il server MCP alla
-versione 0.2.0 e aggiornano la dipendenza SDK MCP. Il file
-`config/profile.env.example` elimina il default provider/modello e documenta le
-variabili opzionali.
-
-## 14. Verifiche essenziali già effettuate
+## 13. Verifiche essenziali già effettuate
 
 Le verifiche fatte per l'intervento search sono intenzionalmente minime:
 
@@ -494,74 +436,35 @@ successo perché nell'ambiente mancava il modulo `yaml`; questo non invalida la
 discovery nativa Pi già passata, ma va ricordato se si vuole aggiungere quella
 verifica in CI.
 
-## 15. Cosa non è ancora implementato
 
-Il progetto non deve essere descritto come completo oltre ciò che esiste. In
-particolare, restano fuori dalla fase corrente:
 
-- endpoint EPOS adiacenti per metadata più ricchi;
-- fetch controllato di URL arbitrari;
-- supporto operativo OGC, ispezione e visualizzazione specialistica;
-- bundle riproducibile che raccolga automaticamente dataset, README, script e
-  provenance;
-- pre-analisi standardizzata (struttura, completezza, missing values, anomalie);
-- template deterministici per grafici, mappe e notebook;
-- modalità demo guidata;
-- verifica end-to-end su più provider/modelli.
-
-La dimensione della risposta grezza ricevuta dal server EPOS resta fuori scope:
-l'MCP la deve comunque leggere per poter fare flattening e ranking; l'obiettivo
-attuato è non trasferirla tutta al modello.
-
-## 16. Come orientarsi durante la manutenzione
-
-Per una modifica alla conversazione, iniziare da `prompts/SYSTEM.md` e dalla
-skill più specifica. Per una modifica alla disponibilità dei tool, guardare
-`TOOL_GROUPS` e `createLoadToolsTool` nell'estensione. Per cambiare endpoint,
-schema o trasformazione EPOS, modificare `services/mcp-epos/tools/epos_mcp_http.py` e
-confrontare l'OpenAPI locale. Per cambiare il ciclo di avvio o l'isolamento del
-contesto, intervenire nel launcher.
-
-Un'estensione nuova dovrebbe seguire questa regola pratica:
-
-1. aggiungere il tool MCP solo se è una capacità tecnica riusabile;
-2. aggiungere un wrapper Pi se occorrono router, provenance, stato o limiti
-   di contesto;
-3. assegnarlo a un gruppo `TOOL_GROUPS` il più stretto possibile;
-4. aggiornare la skill soltanto se cambia la decisione che il modello deve fare;
-5. tenere le risposte inviate al modello piccole e salvare i dati completi nel
-   workspace;
-6. verificare prima il contratto MCP e poi una query reale rappresentativa.
-
-Questa disciplina mantiene separati i tre livelli fondamentali: *policy* nelle
-skill, *orchestrazione* nell'estensione e *fatti/azioni tecniche* nei server MCP.
-
-## 17. Report Tecnico sulle Ottimizzazioni e Interventi Architetturali
+## 14. Report Tecnico sulle Ottimizzazioni e Interventi Architetturali
 
 Di seguito è documentato in dettaglio tutto il lavoro tecnico effettuato sull'architettura di EPOS Agent, con particolare focus sulla riduzione dei token, sull'ottimizzazione del processo di discovery e sulla risoluzione dei bug critici durante l'acquisizione dei dati.
 
-### 17.1 Ottimizzazione della Context Window e Riduzione dei Token
+### 14.1 Ottimizzazione della Context Window e Riduzione dei Token
 Il problema iniziale evidenziato dai log di utilizzo era l'eccessivo consumo di token del LLM dovuto al caricamento contestuale dell'intera base di conoscenza del progetto ad ogni iterazione.
 - **Decoupling della Skill Monolitica:** La precedente skill monolitica (`skills/epos/SKILL.md`) che conteneva l'intero dominio di azioni dell'agente è stata deprecata ed eliminata. Il dominio di istruzioni è stato diviso in tre skill specializzate, modulari e progressive: `epos-search`, `epos-service-access` ed `epos-fdsn-earthquakes`.
 - **Caricamento Lazy (Progressivo):** All'avvio dell'applicazione (`bin/epos-agent`), l'agente riceve solo una sintesi minima delle skill. Tramite il tool standard `read` e una logica di discovery nativa, l'agente decide di "espandere" nella context window attiva solo il file `SKILL.md` pertinente alla fase corrente dell'utente (ad esempio, fase di ricerca o fase di download), garantendo un drastico risparmio sul costo computazionale e sui token passati al prompt.
 - **Router Intelligente dei Tool (`agent-runtime/index.ts`):** È stato introdotto un router di stato che disabilita i tool fuori contesto. Invece di esporre tutti gli endpoint MCP (Model Context Protocol) simultaneamente, il sistema espone inizialmente solo il tool di base `read` e l'hook interno `epos_load_tools`. L'agente chiama questo hook per "sbloccare" i tool strettamente necessari per il task (raggruppati in domini di visibilità: `catalog_search`, `description`, `download`, `seismology`, `analysis` e `workspace`).
 - **Protezione dell'Overflow della Context Window (Safe-limit):** I payload di ritorno (JSON, testo grezzo) generati da servizi MCP molto prolissi sono stati protetti. Se il risultato serializzato per il modello supera i 12.000 caratteri, il testo viene troncato introducendo il flag `truncatedInChat` (per avvisare il modello), mentre il dataset reale viene riversato integralmente su file temporanei all'interno di `workspace/`.
 
-### 17.2 Miglioramento della Pipeline di Ricerca Catalografica EPOS
+### 14.2 Miglioramento della Pipeline di Ricerca Catalografica EPOS
 L'interazione dell'agente col catalogo è stata ristrutturata per prevenire allucinazioni dovute alla grande quantità di record raw.
 - **Ricerca a Due Fasi e Ambiguità:** La pipeline di discovery (in `services/mcp-epos/tools/epos_mcp_http.py`) risolve proattivamente le ambiguità sui nomi dei provider. L'agente esegue prima `epos_search_organizations` e, solo a seguito della risoluzione dell'ID univoco dell'organizzazione, invoca `epos_search_resources`.
 - **Flattening Dinamico dell'Albero Remoto:** L'API pubblica di EPOS produce risposte fortemente gerarchizzate. È stato introdotto un meccanismo di "flattening" locale lato estensione. Il nodo figlio viene appiattito mentre il codice conserva ricorsivamente i metadati genitoriali (come il dominio in `_catalogDomains`). In questo modo l'agente riceve candidati uniformi ed esplorabili direttamente.
 - **Ranking Semantico Pre-Paginazione:** È stato introdotto un filtro vettoriale euristico personalizzato (in Python) che agisce localmente prima di restituire l'array impaginato. L'algoritmo valuta la precisione semantica (confrontando la pertinenza nel titolo, le frasi esatte nella descrizione e il conteggio dei token matchati) e procede a una deduplica per ID.
 - **Schede Compattate:** Soltanto i primi 5 risultati del ranking superano il filtro e vengono iniettati nella chat come "schede compattate" (provider, formati supportati, status operativo e breve sintesi), spurgando i payload grezzi e i metadata inutili al ragionamento del modello LLM.
 
-### 17.3 Risoluzione del Bug nei Server FDSN (Sliding Window Algorithm)
+### 14.3 Risoluzione del Bug nei Server FDSN (Sliding Window Algorithm)
 Il problema più critico del sistema riguardava il download massivo di eventi sismici da nodi FDSN (es. il download completo della sequenza sismica di Amatrice estesa su diversi mesi). In queste situazioni l'agente entrava in loop o "si impallava".
 - **Diagnosi del Vecchio Algoritmo (Metodo per Bisezione):** A causa dei limiti severi dei datacenter FDSN (tetto massimo di 1000 eventi a richiesta HTTP), quando l'agente riceveva una pagina saturata di 1000 eventi, supponeva la presenza di dati nascosti. Di conseguenza, l'algoritmo *scartava completamente* il payload appena scaricato, tagliava la finestra temporale della richiesta a metà (bisezione temporale) e riprovava ad oltranza fino a ottenere una risposta minore di 1000. Questo portava a uno spreco estremo (centinaia di chiamate a vuoto) prima ancora di salvare il primo record.
 - **La Soluzione Implementata (Sliding Window):** Il codice in `tools/agent-runtime/index.ts` (righe 1406-1432) è stato totalmente riscritto. È stata creata una logica a "finestra scorrevole intelligente". Quando il modulo riceve una risposta saturata (es. `FDSN_PAGE_SIZE`), *non scarta più i dati*. Salva immediatamente la pagina di eventi su disco e legge l'indice temporale dell'ultimo evento dell'array (timestamp esatto). Utilizza poi questo valore per traslare in avanti la finestra temporale della successiva query HTTP (`starttime = ultimo_evento.timestamp`).
 - **Ottimizzazione delle Prestazioni:** Questa modifica ha abbassato drasticamente il tasso di richieste di rete portandolo al minimo teorico (es. per processare uno sciame sismico di 80.000 eventi, il sistema passa da loop infiniti e blocchi a circa 80 chiamate API fluide in sequenza rapida).
 - **Nuovo Workflow per l'Utente ("Tutto e Subito"):** Come richiesto esplicitamente nei feedback, il processo è stato automatizzato per non disturbare l'utente. L'agente non propone più campionamenti intermedi bloccandosi ogni 2 giorni di dati, ma scarica fluidamente l'intero dataset, avvisando a download completato.
 
-### 17.4 Architettura Sicura: Integrità dei Dati e Provenance
+### 14.4 Architettura Sicura: Integrità dei Dati e Provenance
 - **Data Recovery:** Durante le complesse sessioni FDSN (che gestiscono grosse moli di dati strutturati in JSONL), nel caso in cui un download subisca un'interruzione (abort) o fallisca a metà per timeout server, il file parziale non viene perso né cestinato. Viene rinominato localmente aggiungendo l'estensione `.partial.jsonl`, salvaguardando il costo operazionale sostenuto fino all'errore.
 - **Tracciabilità Rigorosa (Provenance):** Nessuna transazione HTTP avviene senza traccia. Ogni tool eseguito compila un record JSON in `logs/provenance/` contenente lo stato HTTP, l'endpoint interrogato, i timestamp e il volume bytes. Qualsiasi output prodotto dal modello può essere verificato fino alla fonte grezza.
 - **Isolamento del Workspace:** I salvataggi per dati scientifici, output di plot grafici ed esportazione di script Python (eseguite tramite il tool `epos_run_python`) sono confinati temporaneamente e strettamente nelle directory di studio (es. `~/epos-agent/workspace/study-XYZ`). L'hard limit di budget download, impostato a 1 GiB per singola sessione di ricerca, opera sia lato stream che in append per scongiurare memory leak o attacchi Out-Of-Memory.
+
