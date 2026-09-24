@@ -93,7 +93,7 @@ fi
 say "Copying EPOS Agent files to $INSTALL_ROOT"
 rsync -a --delete \
   --exclude='.git/' --exclude='.runtime/' --exclude='services/mcp-fdsnws-event/.venv/' \
-  --exclude='services/mcp-epos/.venv/' --exclude='visualization/.venv/' \
+  --exclude='services/mcp-epos/.venv/' --exclude='tools/visualization/.venv/' \
   --exclude='cache/' --exclude='logs/' --exclude='sessions/' \
   --exclude='workspace/*' --exclude='config/pi-agent/' --exclude='config/profile.env' \
   "$REPO_ROOT/" "$INSTALL_ROOT/"
@@ -115,9 +115,9 @@ python3 -m venv "$INSTALL_ROOT/services/mcp-fdsnws-event/.venv"
 "$INSTALL_ROOT/services/mcp-fdsnws-event/.venv/bin/python" -m pip install "$INSTALL_ROOT/services/mcp-fdsnws-event" >/dev/null
 
 say "Creating shared Python environment for EPOS visualizations"
-python3 -m venv "$INSTALL_ROOT/visualization/.venv"
-"$INSTALL_ROOT/visualization/.venv/bin/python" -m pip install --upgrade pip >/dev/null
-"$INSTALL_ROOT/visualization/.venv/bin/python" -m pip install -r "$INSTALL_ROOT/visualization/requirements-core.txt" >/dev/null
+python3 -m venv "$INSTALL_ROOT/tools/visualization/.venv"
+"$INSTALL_ROOT/tools/visualization/.venv/bin/python" -m pip install --upgrade pip >/dev/null
+"$INSTALL_ROOT/tools/visualization/.venv/bin/python" -m pip install -r "$INSTALL_ROOT/tools/visualization/requirements-core.txt" >/dev/null
 
 if [[ ! -f "$INSTALL_ROOT/config/profile.env" ]]; then
   cp "$INSTALL_ROOT/config/profile.env.example" "$INSTALL_ROOT/config/profile.env"

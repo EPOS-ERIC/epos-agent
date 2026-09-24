@@ -55,25 +55,80 @@ class DataAndPlotTests(unittest.TestCase):
         }
         (self.bundle / "data" / "grid.json").write_text(json.dumps(coverage), encoding="utf-8")
         (self.bundle / "visualization.json").write_text(
-            json.dumps({"version": 1, "mode": "auto", "datasets": [], "basemap": "street"}),
+            json.dumps({
+                "version": 2,
+                "recipe": {"name": "custom"},
+                "datasets": [{"path": "data/points.csv", "role": "events", "plots": ["time_series"]}],
+                "map": {"basemap": "street", "topography": False},
+                "interactive": True,
+            }),
             encoding="utf-8",
         )
         from epos_viz import run
 
         report = run(self.bundle)
 
-        self.assertEqual(len(report["datasets"]), 4)
+        self.assertEqual(len(report["datasets"]), 1)
         self.assertTrue((self.bundle / "figures" / "interactive-map.html").exists())
         self.assertTrue((self.bundle / "figures" / "static-map.png").exists())
+        self.assertLess(report["outputs"].index(str(self.bundle / "figures" / "static-map.png")),
+                        report["outputs"].index(str(self.bundle / "figures" / "interactive-map.html")))
         self.assertTrue(any(path.endswith("-time-series.png") for path in report["outputs"]))
-        self.assertTrue(any(path.endswith("-events.png") for path in report["outputs"]))
-        self.assertTrue(any(path.endswith("-raster.png") for path in report["outputs"]))
-        csv_summary = next(item for item in report["datasets"] if item["path"].endswith("points.csv"))
+        self.assertTrue(report["inputs"][0]["sha256"])
+        csv_summary = report["datasets"][0]
         self.assertEqual(csv_summary["excludedCoordinates"], 1)
         html = (self.bundle / "figures" / "interactive-map.html").read_text(encoding="utf-8")
         self.assertIn("NASA GIBS Blue Marble", html)
         self.assertIn("Global Imagery Browse Services", html)
         self.assertIn("OpenStreetMap", html)
+
+    def test_v1_configuration_is_rejected(self) -> None:
+        (self.bundle / "visualization.json").write_text(json.dumps({"version": 1, "datasets": []}), encoding="utf-8")
+        from epos_viz import run
+
+        with self.assertRaisesRegex(ValueError, "v1 is unsupported"):
+            run(self.bundle)
+
+    def test_seismic_recipe_renders_stations_and_frequency_magnitude(self) -> None:
+        (self.bundle / "data" / "events.csv").write_text(
+            "time,latitude,longitude,magnitude,depth_km\n"
+            "2026-01-01T00:00:00Z,43.1,12.2,1.5,5\n"
+            "2026-01-02T00:00:00Z,43.2,12.3,1.8,7\n"
+            "2026-01-03T00:00:00Z,43.3,12.4,2.1,9\n",
+            encoding="utf-8",
+        )
+        (self.bundle / "data" / "stations.csv").write_text("station,latitude,longitude\nAAA,43.15,12.25\n", encoding="utf-8")
+        (self.bundle / "visualization.json").write_text(json.dumps({
+            "version": 2,
+            "recipe": {"name": "seismic_catalog_standard", "parameters": {"magnitudeCompleteness": 1.5}},
+            "datasets": [
+                {"path": "data/events.csv", "role": "events"},
+                {"path": "data/stations.csv", "role": "stations"},
+            ],
+            "map": {"basemap": "none", "topography": False},
+            "interactive": False,
+        }), encoding="utf-8")
+        from epos_viz import run
+
+        report = run(self.bundle)
+
+        self.assertTrue((self.bundle / "figures" / "gutenberg-richter.png").exists())
+        self.assertTrue((self.bundle / "figures" / "seismic-catalog-dashboard.png").exists())
+        self.assertIsNotNone(report["metrics"]["gutenbergRichter"]["bValue"])
+        self.assertFalse((self.bundle / "figures" / "interactive-map.html").exists())
+
+    def test_static_map_composes_declared_wms(self) -> None:
+        from epos_viz.maps import static_map
+
+        wms = {"url": "https://example.test/wms", "layers": "volcanic", "attribution": "Test provider"}
+        with patch("epos_viz.maps._add_wms_layer") as add_wms:
+            output, warnings, _ = static_map(
+                [], self.bundle / "figures" / "wms.png",
+                config={"topography": False, "extent": [12.0, 36.0, 16.0, 39.0], "wms": [wms]},
+            )
+        self.assertTrue(output.exists())
+        self.assertEqual(warnings, [])
+        add_wms.assert_called_once()
 
     def test_satellite_failure_falls_back_to_coordinate_grid(self) -> None:
         from epos_viz.data import load_dataset

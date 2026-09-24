@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EPOS visualization v2",
+  "type": "object",
+  "required": ["version", "recipe", "datasets", "map", "interactive"],
+  "properties": {
+    "version": { "const": 2 },
+    "recipe": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "enum": ["seismic_catalog_standard", "seismic_sequence", "focal_mechanism_standard", "hazard_map_standard", "custom"] },
+        "parameters": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "datasets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string" },
+          "label": { "type": "string" },
+          "role": { "enum": ["events", "stations", "vector_overlay", "raster", "waveforms"] },
+          "crs": { "type": "string" },
+          "mapping": { "type": "object" },
+          "units": { "type": "object", "additionalProperties": { "type": "string" } },
+          "plots": { "type": "array", "items": { "enum": ["distribution", "scatter", "time_series", "gutenberg_richter", "space_time", "vertical_section", "beachballs"] } }
+        },
+        "additionalProperties": false
+      }
+    },
+    "map": {
+      "type": "object",
+      "properties": {
+        "basemap": { "enum": ["street", "satellite", "none"] },
+        "topography": { "type": "boolean" },
+        "extent": {
+          "type": "array",
+          "prefixItems": [{ "type": "number" }, { "type": "number" }, { "type": "number" }, { "type": "number" }],
+          "minItems": 4,
+          "maxItems": 4
+        }
+      },
+      "additionalProperties": false
+    },
+    "interactive": { "type": "boolean" },
+    "wms": { "type": "array" }
+  },
+  "additionalProperties": false
+}

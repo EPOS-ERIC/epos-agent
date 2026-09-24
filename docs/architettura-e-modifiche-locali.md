@@ -56,7 +56,7 @@ pertinenti alla domanda corrente.
 | --- | --- |
 | `bin/epos-agent` | Launcher: carica configurazione, prompt, skill ed estensione, poi avvia Pi. |
 | `prompts/SYSTEM.md` | Regole globali corte: tool minimi, selezione esplicita, sicurezza download e workspace. |
-| `extensions/epos-tools/index.ts` | Integrazione Pi: router dei tool, client MCP stdio, FDSN, stato, provenance e telemetria. |
+| `tools/agent-runtime/index.ts` | Integrazione Pi: router dei tool, client MCP stdio, FDSN, stato, provenance e telemetria. |
 | `services/mcp-epos/tools/epos_mcp_http.py` | Server MCP Python per catalogo, organizzazioni, metadata e download EPOS. |
 | `services/mcp-epos/tools/epos_mcp_stdio.py` | Entry point stdio usato localmente da EPOS Agent. |
 | `services/mcp-epos/definitions/api-spec.json` | Copia locale del contratto OpenAPI EPOS, autorevole per chi mantiene l'MCP ma non caricata nel prompt. |
@@ -82,7 +82,7 @@ Il launcher passa esplicitamente:
 --no-extensions --no-skills --no-prompt-templates --no-context-files
 --system-prompt prompts/SYSTEM.md
 --skill skills/
---extension extensions/epos-tools/index.ts
+--extension tools/agent-runtime/index.ts
 --tools <lista controllata>
 ```
 
@@ -163,7 +163,7 @@ finché non viene fatto un cleanup esplicito.
 
 ## 5. Router dei tool e visibilità per turno
 
-Il router vive in `extensions/epos-tools/index.ts`. Il suo scopo è ridurre sia i
+Il router vive in `tools/agent-runtime/index.ts`. Il suo scopo è ridurre sia i
 token degli schemi tool sia la probabilità di selezionare una capacità fuori
 contesto.
 
@@ -427,7 +427,7 @@ README.md
 bin/epos-agent
 config/profile.env.example
 docs/architecture-v0.2.md
-extensions/epos-tools/index.ts
+tools/agent-runtime/index.ts
 prompts/SYSTEM.md
 services/mcp-epos/requirements.txt
 services/mcp-epos/tools/epos_mcp_http.py

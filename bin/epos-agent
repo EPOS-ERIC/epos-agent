@@ -22,7 +22,7 @@ setup_gemini() {
     exit 1
   }
 
-  temp_profile="$(mktemp "$ROOT/config/profile.env.XXXXXX")"
+  temp_profile="$(mktemp "$ROOT/config/profile.env.XXXXXX")"/
   if [[ -f "$profile" ]]; then
     awk '!/^(GEMINI_API_KEY|EPOS_PROVIDER|EPOS_MODEL)=/' "$profile" > "$temp_profile"
   fi
@@ -73,23 +73,22 @@ fi
 printf '%b' "
 ${EPOS_GREEN}╔══════════════════════════════════════════════════════════════════════════════════╗${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}            ${EPOS_GOLD}●●●●●●●●●●●●●●●●●●${EPOS_RESET}                                                    ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}         ${EPOS_GOLD}●●●                    ●●●${EPOS_RESET}                                                ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}       ${EPOS_GOLD}●●${EPOS_RESET}        ${EPOS_WHITE}███████╗██████╗  ██████╗ ███████╗${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}      ${EPOS_GOLD}●●${EPOS_RESET}         ${EPOS_WHITE}██╔════╝██╔══██╗██╔═══██╗██╔════╝${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}      ${EPOS_GOLD}●●${EPOS_RESET}         ${EPOS_WHITE}█████╗  ██████╔╝██║   ██║███████╗${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}       ${EPOS_GOLD}●●${EPOS_RESET}        ${EPOS_WHITE}██╔══╝  ██╔═══╝ ██║   ██║╚════██║${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}         ${EPOS_GOLD}●●●${EPOS_RESET}     ${EPOS_WHITE}███████╗██║     ╚██████╔╝███████║${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}            ${EPOS_GOLD}●●●${EPOS_RESET}  ${EPOS_WHITE}╚══════╝╚═╝      ╚═════╝ ╚══════╝${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}                   ${EPOS_GOLD}●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}███████╗██████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}███████╗${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}               ${EPOS_GOLD}●●●●●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}██╔════╝██╔══██╗██╔═══██╗██╔════╝${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}              ${EPOS_GOLD}●●●●●●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}█████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██████╔╝██║ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██║███████╗${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}              ${EPOS_GOLD}●●●●●●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}██╔══╝ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}██╔═══╝ ██║ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██║╚════██║${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}                ${EPOS_GOLD}●●●●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}███████╗██║  ${EPOS_DIM}‧${EPOS_RESET}${EPOS_WHITE}  ╚██████╔╝███████║${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}                   ${EPOS_GOLD}●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}╚══════╝╚═╝  ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}   ╚═════╝ ╚══════╝${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}              ${EPOS_GOLD}EUROPEAN PLATE OBSERVING SYSTEM${EPOS_RESET}                                     ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}                         ${EPOS_GOLD}EUROPEAN PLATE OBSERVING SYSTEM${EPOS_RESET}                          ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}                     ${EPOS_GOLD}────────────────────────────────────────${EPOS_RESET}                     ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}                               ${EPOS_WHITE}EPOS Agent · ${EPOS_RESET}${EPOS_GOLD}V1.0.1${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}       ${EPOS_DIM}Solid Earth data services, metadata, provenance and discovery${EPOS_RESET}              ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}          ${EPOS_WHITE}Solid Earth data services, metadata, provenance and discovery${EPOS_RESET}           ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}       ${EPOS_WHITE}Search${EPOS_RESET} ${EPOS_GOLD}│${EPOS_RESET} ${EPOS_WHITE}Describe${EPOS_RESET} ${EPOS_GOLD}│${EPOS_RESET} ${EPOS_WHITE}Validate${EPOS_RESET} ${EPOS_GOLD}│${EPOS_RESET} ${EPOS_WHITE}Execute${EPOS_RESET} ${EPOS_GOLD}│${EPOS_RESET} ${EPOS_WHITE}Cite provenance${EPOS_RESET}                   ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}             ${EPOS_WHITE}Search${EPOS_RESET} ${EPOS_GOLD}│${EPOS_RESET} ${EPOS_WHITE}Describe${EPOS_RESET} ${EPOS_GOLD}│${EPOS_RESET} ${EPOS_WHITE}Validate${EPOS_RESET} ${EPOS_GOLD}│${EPOS_RESET} ${EPOS_WHITE}Execute${EPOS_RESET} ${EPOS_GOLD}│${EPOS_RESET} ${EPOS_WHITE}Cite provenance${EPOS_RESET}             ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}╚══════════════════════════════════════════════════════════════════════════════════╝${EPOS_RESET}
-
 "
 
 declare -a args=(
@@ -100,7 +99,7 @@ declare -a args=(
   --session-dir "$ROOT/sessions"
   --system-prompt "$(cat "$ROOT/prompts/SYSTEM.md")"
   --skill "$ROOT/skills"
-  --extension "$ROOT/extensions/epos-tools/index.ts"
+  --extension "$ROOT/tools/agent-runtime/index.ts"
   --theme "$ROOT/themes/epos-corporate.json"
   --use-theme "epos-corporate"
   --tools "read,grep,find,ls,write,edit,epos_load_tools,epos_manage_study,epos_search,epos_search_page,epos_select_candidate,epos_search_filter,epos_organizations,epos_details,epos_prepare_execute,epos_execute,epos_inspect,epos_visualize,epos_fetch,epos_prepare_visualization,epos_run_python,epos_finalize_notebook,epos_show_image,epos_fdsnws_event_call"

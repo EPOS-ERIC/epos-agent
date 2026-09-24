@@ -10,19 +10,21 @@ Load `analysis` and work only inside the active study bundle. Call `epos_prepare
 ## Requirements and defaults
 
 Never hand-write `requirements.txt` or guess dependencies. `epos_finalize_notebook` must derive them from the actual imports and resolved visualization features, and must reject unmapped third-party imports. The generated notebook installs that file in its first cell with `%pip install -r requirements.txt`.
-Create or propose the Jupyter Notebook only when explicitly requested, at the end of the workflow, after successfully validating `analysis.py`. Do not create a placeholder notebook at the beginning of the study.
+Generate and display static PNG outputs first with `interactive: false`. After they succeed, offer an interactive version; regenerate with `interactive: true` only after explicit confirmation and display the HTML in the terminal. Then propose a Jupyter Notebook with the code to reproduce it. Create the notebook only when explicitly requested and do not create a placeholder at the beginning of the study.
 
 **Workflow ordering:** The agent must NEVER propose visualization or analysis options (plots, maps, scatter) before physically acquiring the data. Make your graphical proposals only based on the nature and quantity of the data just downloaded and verified.
 
 Use the study context, scientific question, confirmed filters and dataset metadata already present in state. Ask a question only when the requested scientific comparison remains ambiguous. Never ask for coordinates when a selected resource or saved dataset already provides a bounding box, point geometry or coordinate columns.
 
-Use automatic field and plot detection by default. Pass dataset mappings or plot overrides to `epos_prepare_visualization` only when metadata resolves an ambiguity or the researcher explicitly requests a comparison. The standard path produces a compact `visualization.json`, not generated plotting code.
+Select the v2 recipe from the researcher's stated scientific request, then pass it to `epos_prepare_visualization`; do not infer a recipe merely from matching columns. Pass dataset roles (`events`, `stations`, `vector_overlay`, `raster`, `waveforms`) and mappings only when metadata resolves an ambiguity. The standard path produces a compact `visualization.json`, not generated plotting code.
 
 Do not use a hardcoded place, center, extent, layer, CRS, endpoint or time range. Derive them from, in order:
 
 1. confirmed study parameters;
 2. authoritative resource or service metadata;
 3. the saved dataset's coordinates and timestamps.
+
+For a WMS-only PNG, pass the resulting `[west, south, east, north]` extent to `epos_prepare_visualization`; omit it when saved observations already define the map bounds.
 
 If none is available, ask for one reference point or a latitude/longitude pair. Do not ask for both.
 
@@ -46,9 +48,9 @@ Choose the smallest set that answers the scientific question:
 - gridded coverage: raster or contour plot using declared axes and CRS;
 - OGC map layer: render the declared layer for the confirmed extent, then overlay compatible saved observations when requested.
 
-Interactive maps use the token-free OpenStreetMap and NASA GIBS layers supplied by the reusable library. Satellite imagery is visual context rather than scientific data. Preserve provider attribution, and accept the library's coordinate-grid fallback when remote tiles are unavailable.
+Static maps use the token-free NASA GIBS satellite layer by default, render selected authoritative WMS layers in the PNG, and fall back to a coordinate grid when remote imagery is unavailable. Event markers scale with magnitude, the largest 10% use stars, and stations use triangles. Interactive maps additionally provide OpenStreetMap. Satellite imagery is visual context rather than scientific data; preserve provider attribution.
 
-Label axes with units from metadata when available. Keep missing or invalid records out of the plotted subset but report how many were excluded. Automated observations are preliminary and must remain distinct from scientific validation.
+Every figure must include a legend and label both axes with units from metadata when available, or UTC/date context for temporal axes. Keep missing or invalid records out of the plotted subset but report how many were excluded. Automated observations are preliminary and must remain distinct from scientific validation.
 
 ## Outputs
 

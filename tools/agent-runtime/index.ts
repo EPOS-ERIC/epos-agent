@@ -14,12 +14,13 @@ const EPOS_MCP_PYTHON = join(ROOT, "services", "mcp-epos", ".venv", "bin", "pyth
 const EPOS_MCP_SERVER = join(ROOT, "services", "mcp-epos", "tools", "epos_mcp_stdio.py");
 const EPOS_MCP_ARTIFACTS = resolve(ROOT, "services", "mcp-epos", "artifacts");
 const WORKSPACE = resolve(ROOT, "workspace");
-const VISUALIZATION_ROOT = resolve(ROOT, "visualization");
+const VISUALIZATION_ROOT = resolve(ROOT, "tools", "visualization");
 const VISUALIZATION_TEMPLATE = join(VISUALIZATION_ROOT, "templates");
 const ANALYSIS_ENV = join(VISUALIZATION_ROOT, ".venv");
 const ANALYSIS_PYTHON = join(ANALYSIS_ENV, "bin", "python");
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const FDSN_PAGE_SIZE = 1000;
+const FDSN_INITIAL_SHARD_MS = 31 * 24 * 60 * 60 * 1000;
 const FDSN_SAMPLE_SIZE = 5;
 const MODEL_RESULT_LIMIT = 12000;
 const MAX_DOWNLOAD_BYTES = 1024 * 1024 * 1024;
@@ -48,7 +49,7 @@ type StudyState = {
   budgetBytes: number;
   downloadedBytes: number;
   createdAt: string;
-  visualizationVersion?: 1;
+  visualizationVersion?: 2;
 };
 type ConversationState = {
   version: 2;
@@ -165,7 +166,7 @@ function storedConversationState(data: unknown): ConversationState | undefined {
         budgetBytes: MAX_DOWNLOAD_BYTES,
         downloadedBytes: Math.max(0, Number(study.downloadedBytes) || 0),
         createdAt: typeof study.createdAt === "string" ? study.createdAt : now(),
-        visualizationVersion: study.visualizationVersion === 1 ? 1 : undefined,
+        visualizationVersion: study.visualizationVersion === 2 ? 2 : undefined,
       };
     }
   }
@@ -522,11 +523,13 @@ async function ensureVisualizationTemplate(bundlePath: string) {
   const packagePath = join(bundlePath, "epos_viz");
   try { await access(packagePath); }
   catch { await cp(join(VISUALIZATION_TEMPLATE, "epos_viz"), packagePath, { recursive: true }); }
+  await writeIfMissing(join(bundlePath, "visualization.schema.json"), await readFile(join(VISUALIZATION_TEMPLATE, "visualization.schema.json"), "utf8"));
   await writeIfMissing(join(bundlePath, "visualization.json"), JSON.stringify({
-    version: 1,
-    mode: "auto",
+    version: 2,
+    recipe: { name: "custom" },
     datasets: [],
-    basemap: "street",
+    map: { basemap: "satellite", topography: false },
+    interactive: false,
   }, null, 2) + "\n");
 }
 
@@ -538,7 +541,7 @@ async function visualizationDataFiles(directory: string): Promise<string[]> {
   for (const entry of entries) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) files.push(...await visualizationDataFiles(path));
-    else if (entry.isFile() && [".csv", ".json", ".jsonl", ".geojson", ".tif", ".tiff"].includes(extname(path).toLowerCase()) && !entry.name.includes(".partial.")) files.push(path);
+    else if (entry.isFile() && [".csv", ".json", ".jsonl", ".geojson", ".tif", ".tiff", ".parquet", ".gpkg", ".shp", ".xml", ".qml", ".mseed", ".msd", ".seed"].includes(extname(path).toLowerCase()) && !entry.name.includes(".partial.")) files.push(path);
   }
   return files.sort();
 }
@@ -606,11 +609,11 @@ async function writeStudyDocuments(state: ConversationState) {
     catch { provenanceRecords.push({ provenanceFile: path, readable: false }); }
   }
   await writeFile(join(study.bundlePath, "provenance.json"), JSON.stringify({ records: provenanceRecords }, null, 2));
-  const reproduce = study.visualizationVersion === 1
+  const reproduce = study.visualizationVersion === 2
     ? "Run `analysis.py` through EPOS Agent. A notebook is generated only after the analysis succeeds."
     : `Run \`python3 analysis.py\` from this directory or open \`${study.slug}.ipynb\`.`;
   await writeFile(join(study.bundlePath, "README.md"), `# ${study.title}\n\n${study.context || "No context recorded."}\n\n## Scientific question\n\n${study.scientificQuestion || "Not yet defined."}\n\n## Reproduce\n\n${reproduce}\n\n## Completeness\n\nConsult \`manifest.json\` and \`provenance.json\` before scientific interpretation. Transport completeness does not by itself prove catalogue completeness.\n`);
-  if (study.visualizationVersion === 1) await ensureVisualizationTemplate(study.bundlePath);
+  if (study.visualizationVersion === 2) await ensureVisualizationTemplate(study.bundlePath);
 }
 
 function jsonlRow(columns: unknown, row: unknown) {
@@ -687,7 +690,7 @@ function createWorkflowTool() {
           budgetBytes: MAX_DOWNLOAD_BYTES,
           downloadedBytes: 0,
           createdAt: now(),
-          visualizationVersion: 1,
+          visualizationVersion: 2,
         };
         runtimeConversationState = {
           ...emptyConversationState(),
@@ -1044,9 +1047,16 @@ const nativeEposFetchTool = defineTool({
 const visualizationDatasetShape = Type.Object({
   path: Type.String({ description: "Dataset path inside the active study bundle" }),
   label: Type.Optional(Type.String()),
+  role: Type.Optional(StringEnum(["events", "stations", "vector_overlay", "raster", "waveforms"] as const)),
+  crs: Type.Optional(Type.String({ description: "Declared source CRS when it is not embedded in the data" })),
   mapping: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Optional field overrides such as latitude, longitude, time, value, values, x and y" })),
   units: Type.Optional(Type.Record(Type.String(), Type.String())),
-  plots: Type.Optional(Type.Array(StringEnum(["distribution", "scatter"] as const))),
+  plots: Type.Optional(Type.Array(StringEnum(["distribution", "scatter", "time_series", "gutenberg_richter", "space_time", "vertical_section", "beachballs"] as const))),
+});
+
+const visualizationRecipeShape = Type.Object({
+  name: StringEnum(["seismic_catalog_standard", "seismic_sequence", "focal_mechanism_standard", "hazard_map_standard", "custom"] as const),
+  parameters: Type.Optional(Type.Record(Type.String(), Type.Any())),
 });
 
 const visualizationWmsShape = Type.Object({
@@ -1060,16 +1070,20 @@ const visualizationWmsShape = Type.Object({
 const prepareVisualizationTool = defineTool({
   name: "epos_prepare_visualization",
   label: "EPOS Prepare Visualization",
-  description: "Prepare the reusable analysis runner for downloaded study data. Auto-detect fields by default; provide only genuine overrides.",
+  description: "Prepare the v2 recipe selected from the researcher's request for downloaded study data. Declare dataset roles and only genuine field or CRS overrides.",
   parameters: Type.Object({
+    recipe: visualizationRecipeShape,
     datasets: Type.Optional(Type.Array(visualizationDatasetShape)),
     basemap: Type.Optional(StringEnum(["street", "satellite", "none"] as const)),
+    topography: Type.Optional(Type.Boolean({ description: "Render a PyGMT topographic map when GMT is available, otherwise record a fallback" })),
+    extent: Type.Optional(Type.Array(Type.Number(), { minItems: 4, maxItems: 4, description: "Confirmed or authoritative [west, south, east, north] map extent" })),
+    interactive: Type.Optional(Type.Boolean({ description: "Create interactive HTML outputs only after the researcher confirms the offer made after reviewing PNG outputs" })),
     wms: Type.Optional(Type.Array(visualizationWmsShape)),
   }),
   async execute(_id, params: any) {
     const study = runtimeConversationState.study;
     if (!study) throw new Error("Start a study before preparing a visualization.");
-    if (study.visualizationVersion !== 1) throw new Error("Reusable visualization templates apply only to studies created after this update.");
+    if (study.visualizationVersion !== 2) throw new Error("Visualization v2 applies only to newly created studies; recreate earlier test studies.");
     if (!["download", "code", "visualization"].includes(study.phase)) {
       throw new Error("Download study data before preparing a visualization.");
     }
@@ -1081,16 +1095,27 @@ const prepareVisualizationTool = defineTool({
       }
       return { ...item, path: relative(study.bundlePath, path) };
     }) : [];
-    const basemap = ["street", "satellite", "none"].includes(params.basemap) ? params.basemap : "street";
-    const config = { version: 1, mode: "auto", datasets, basemap, wms: Array.isArray(params.wms) ? params.wms : [] };
+    const basemap = ["street", "satellite", "none"].includes(params.basemap) ? params.basemap : "satellite";
+    const topography = params.topography === true;
+    const interactive = params.interactive === true;
+    const extent = Array.isArray(params.extent) && params.extent.length === 4 ? params.extent : undefined;
+    const config = { version: 2, recipe: params.recipe, datasets, map: { basemap, topography, ...(extent ? { extent } : {}) }, interactive, wms: Array.isArray(params.wms) ? params.wms : [] };
     const configPath = join(study.bundlePath, "visualization.json");
     await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
     const detectedFiles = await visualizationDataFiles(join(study.bundlePath, "data"));
     const configuredFiles = datasets.map((item: any) => join(study.bundlePath, item.path));
-    const rasterRequested = [...detectedFiles, ...configuredFiles].some(path => [".tif", ".tiff"].includes(extname(path).toLowerCase()));
+    const allFiles = [...detectedFiles, ...configuredFiles];
+    const extensions = new Set(allFiles.map(path => extname(path).toLowerCase()));
+    const gmtAvailable = topography && await execFileAsync("gmt", ["--version"], { timeout: 5000 }).then(() => true).catch(() => false);
     const optionalDependencies = [
       ...(basemap === "satellite" ? ["contextily", "rasterio", "pyproj"] : []),
-      ...(rasterRequested ? ["rasterio"] : []),
+      ...([".tif", ".tiff"].some(extension => extensions.has(extension)) ? ["rasterio"] : []),
+      ...([".xml", ".qml", ".mseed", ".msd", ".seed"].some(extension => extensions.has(extension)) ? ["obspy"] : []),
+      ...(extensions.has(".parquet") ? ["pyarrow"] : []),
+      ...([".gpkg", ".shp"].some(extension => extensions.has(extension)) ? ["geopandas"] : []),
+      ...(datasets.some((item: any) => item.crs && String(item.crs).toUpperCase() !== "EPSG:4326") ? ["pyproj"] : []),
+      ...(interactive ? ["plotly"] : []),
+      ...(gmtAvailable ? ["pygmt"] : []),
     ];
     await ensureAnalysisEnvironment([...new Set(optionalDependencies)]);
     return modelResult({
@@ -1098,6 +1123,7 @@ const prepareVisualizationTool = defineTool({
       configPath,
       detectedFiles,
       basemap,
+      topographyBackend: gmtAvailable ? "pygmt" : "coordinate-grid fallback",
       optionalDependencies,
     }, {
       prepared: true,
@@ -1106,6 +1132,7 @@ const prepareVisualizationTool = defineTool({
       datasetCount: datasets.length || detectedFiles.length,
       autoDiscovery: datasets.length === 0,
       basemap,
+      topographyBackend: gmtAvailable ? "pygmt" : "coordinate-grid fallback",
     });
   },
 });
@@ -1118,7 +1145,7 @@ const finalizeNotebookTool = defineTool({
   async execute() {
     const study = runtimeConversationState.study;
     if (!study) throw new Error("Start a study before finalizing a notebook.");
-    if (study.visualizationVersion !== 1) throw new Error("Notebook finalization applies only to studies created after this update.");
+    if (study.visualizationVersion !== 2) throw new Error("Notebook finalization applies only to visualization v2 studies.");
     const reportPath = join(study.bundlePath, "analysis-report.json");
     try { await access(reportPath); }
     catch { throw new Error("Run analysis.py successfully before finalizing the notebook."); }
@@ -1240,7 +1267,7 @@ const showImageTool = defineTool({
 const fdsnMcpTool = defineTool({
   name: "epos_fdsnws_event_call",
   label: "EPOS FDSNWS Event MCP Call",
-  description: "Query FDSN earthquake data. Without an explicit limit, adaptively partitions time to avoid provider result caps, deduplicates events and verifies boundary coverage. With a limit, requests exactly that subset.",
+  description: "Query FDSN earthquake data. Without an explicit limit, partitions long time spans into month-sized shards, subdivides dense shards to avoid provider result caps, deduplicates events and verifies boundary coverage. With a limit, requests exactly that subset.",
   parameters: Type.Object({
     toolName: StringEnum(["fdsn_query_earthquakes", "fdsn_get_earthquake_by_id", "fdsn_get_arrivals_by_id", "fdsn_get_allmagnitudes_by_id", "fdsn_get_allorigins_by_id", "fdsn_get_focalmechanism_by_id"] as const),
     arguments: Type.Optional(Type.Record(Type.String(), Type.Any(), { description: "Arguments for the selected MCP tool. Query names: starttime, endtime, minmag, maxmag, minlat, maxlat, minlon, maxlon, mindepth, maxdepth, latitude, longitude, minradiuskm, maxradiuskm, updatedafter, limit, offset, orderby, datacenter. Detail tools accept eventid and datacenter." })),
@@ -1360,6 +1387,15 @@ const fdsnMcpTool = defineTool({
         delete baseArguments.orderby;
 
         const fetchInterval = async (intervalStart: string, intervalEnd: string, depth = 0): Promise<void> => {
+          const left = Date.parse(intervalStart);
+          const right = Date.parse(intervalEnd);
+          if (right - left > FDSN_INITIAL_SHARD_MS) {
+            const shardEnd = new Date(left + FDSN_INITIAL_SHARD_MS).toISOString();
+            splitCount += 1;
+            await fetchInterval(intervalStart, shardEnd, depth);
+            await fetchInterval(shardEnd, intervalEnd, depth);
+            return;
+          }
           const page = await callPage({
             ...baseArguments,
             starttime: intervalStart,
@@ -1370,18 +1406,37 @@ const fdsnMcpTool = defineTool({
           });
           const rowColumns = Array.isArray(page.columns) ? page.columns : columns;
           const rows = Array.isArray(page.rows) ? page.rows : [];
+          let advancedByTime = false;
           if (rows.length >= FDSN_PAGE_SIZE) {
-            const left = Date.parse(intervalStart);
-            const right = Date.parse(intervalEnd);
-            if (depth >= 48 || right - left <= 1) throw new Error(`FDSN coverage cannot be proven for dense interval ${intervalStart} to ${intervalEnd}`);
-            const midpoint = new Date(left + Math.floor((right - left) / 2)).toISOString();
-            splitCount += 1;
-            await fetchInterval(intervalStart, midpoint, depth + 1);
-            await fetchInterval(midpoint, intervalEnd, depth + 1);
-            return;
+            const timeIndex = rowColumns.findIndex(column => String(column).toLowerCase() === "time");
+            if (timeIndex >= 0) {
+              const firstRowTime = String(rows[0][timeIndex]);
+              const lastRowTime = String(rows[rows.length - 1][timeIndex]);
+              if (firstRowTime < lastRowTime && lastRowTime > intervalStart && lastRowTime < intervalEnd) {
+                shardCount += 1;
+                await writeRows(rowColumns, rows);
+                await fetchInterval(lastRowTime, intervalEnd, depth + 1);
+                advancedByTime = true;
+              } else if (firstRowTime > lastRowTime && lastRowTime < intervalEnd && lastRowTime > intervalStart) {
+                shardCount += 1;
+                await writeRows(rowColumns, rows);
+                await fetchInterval(intervalStart, lastRowTime, depth + 1);
+                advancedByTime = true;
+              }
+            }
           }
-          shardCount += 1;
-          await writeRows(rowColumns, rows);
+          if (!advancedByTime) {
+            if (rows.length >= FDSN_PAGE_SIZE) {
+              if (depth >= 48 || right - left <= 1) throw new Error(`FDSN coverage cannot be proven for dense interval ${intervalStart} to ${intervalEnd}`);
+              const midpoint = new Date(left + Math.floor((right - left) / 2)).toISOString();
+              splitCount += 1;
+              await fetchInterval(intervalStart, midpoint, depth + 1);
+              await fetchInterval(midpoint, intervalEnd, depth + 1);
+              return;
+            }
+            shardCount += 1;
+            await writeRows(rowColumns, rows);
+          }
         };
 
         await fetchInterval(requestedStart, requestedEnd);
