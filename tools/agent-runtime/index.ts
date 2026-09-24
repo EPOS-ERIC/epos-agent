@@ -6,18 +6,23 @@ import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child
 import { promisify } from "node:util";
 import { createInterface, type Interface } from "node:readline";
 
-const ROOT = process.env.EPOS_AGENT_ROOT || `${process.env.HOME}/epos-agent`;
+const ROOT = process.env.EPOS_AGENT_ROOT || join(process.env.HOME || process.env.USERPROFILE || "", "epos-agent");
+const VENV_EXECUTABLE_DIRECTORY = process.platform === "win32" ? "Scripts" : "bin";
+const PYTHON_EXECUTABLE = process.platform === "win32" ? "python.exe" : "python";
+const FDSN_EXECUTABLE = process.platform === "win32" ? "mcp-fdsnws-event-server.exe" : "mcp-fdsnws-event-server";
+const SYSTEM_PYTHON = process.platform === "win32" ? "py" : "python3";
+const SYSTEM_PYTHON_ARGUMENTS = process.platform === "win32" ? ["-3"] : [];
 const PROV_DIR = join(ROOT, "logs", "provenance");
 const TOKEN_LOG = join(ROOT, "logs", "token-usage.jsonl");
-const FDSN_CMD = join(ROOT, "services", "mcp-fdsnws-event", ".venv", "bin", "mcp-fdsnws-event-server");
-const EPOS_MCP_PYTHON = join(ROOT, "services", "mcp-epos", ".venv", "bin", "python");
+const FDSN_CMD = join(ROOT, "services", "mcp-fdsnws-event", ".venv", VENV_EXECUTABLE_DIRECTORY, FDSN_EXECUTABLE);
+const EPOS_MCP_PYTHON = join(ROOT, "services", "mcp-epos", ".venv", VENV_EXECUTABLE_DIRECTORY, PYTHON_EXECUTABLE);
 const EPOS_MCP_SERVER = join(ROOT, "services", "mcp-epos", "tools", "epos_mcp_stdio.py");
 const EPOS_MCP_ARTIFACTS = resolve(ROOT, "services", "mcp-epos", "artifacts");
 const WORKSPACE = resolve(ROOT, "workspace");
 const VISUALIZATION_ROOT = resolve(ROOT, "tools", "visualization");
 const VISUALIZATION_TEMPLATE = join(VISUALIZATION_ROOT, "templates");
 const ANALYSIS_ENV = join(VISUALIZATION_ROOT, ".venv");
-const ANALYSIS_PYTHON = join(ANALYSIS_ENV, "bin", "python");
+const ANALYSIS_PYTHON = join(ANALYSIS_ENV, VENV_EXECUTABLE_DIRECTORY, PYTHON_EXECUTABLE);
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const FDSN_PAGE_SIZE = 1000;
 const FDSN_INITIAL_SHARD_MS = 31 * 24 * 60 * 60 * 1000;
@@ -551,7 +556,7 @@ async function analysisPython() {
     await access(ANALYSIS_PYTHON);
     return ANALYSIS_PYTHON;
   } catch {
-    return "python3";
+    return SYSTEM_PYTHON;
   }
 }
 
@@ -559,7 +564,7 @@ async function ensureAnalysisEnvironment(optionalDependencies: string[] = []) {
   try { await access(ANALYSIS_PYTHON); }
   catch {
     await mkdir(VISUALIZATION_ROOT, { recursive: true });
-    await execFileAsync("python3", ["-m", "venv", ANALYSIS_ENV], { timeout: 120000 });
+    await execFileAsync(SYSTEM_PYTHON, [...SYSTEM_PYTHON_ARGUMENTS, "-m", "venv", ANALYSIS_ENV], { timeout: 120000 });
   }
   const modules = ["numpy", "pandas", "matplotlib", "folium", "xyzservices", ...optionalDependencies];
   try {

@@ -6,6 +6,25 @@
 
 EPOS Agent is a model-agnostic terminal assistant for discovering and using EPOS Platform solid-Earth data services. It works with any Pi provider/model that supports tool calling and provides compact catalogue discovery, service execution, complete FDSN event downloads, provenance, and controlled workspace analysis.
 
+## Quick start (Windows)
+
+On Windows 10 or 11, open PowerShell and run:
+
+```powershell
+irm https://raw.githubusercontent.com/danielebailo/epos-agent/main/install.ps1 | iex
+```
+
+The installer requires PowerShell 5.1 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer). It installs or updates Git, Node.js and Python when needed, clones EPOS Agent into `%USERPROFILE%\epos-agent`, creates its local runtimes, and adds `EPOS Agent.cmd` to your Desktop. Start the agent by double-clicking that file.
+
+To use a different installation directory, set `EPOS_INSTALL_ROOT` before running the command:
+
+```powershell
+$env:EPOS_INSTALL_ROOT = "C:\EPOS Agent"
+irm https://raw.githubusercontent.com/danielebailo/epos-agent/main/install.ps1 | iex
+```
+
+Existing installations are updated only when they are an unchanged clone of the official repository. Your configuration, sessions, logs and workspace data are preserved.
+
 ## Quick start (macOS/Linux)
 
 The installer checks for these requirements:
@@ -36,6 +55,12 @@ EPOS_AGENT_ROOT=/tmp/epos-agent-test /tmp/epos-agent-test/bin/epos-agent
 
 Copy/edit `config/profile.env.example` as `config/profile.env`, set `EPOS_PROVIDER`, `EPOS_MODEL` and optionally `EPOS_THINKING`, or leave them unset to use the current Pi configuration. No provider or model is selected by default. Authentication is managed by Pi and must be configured locally.
 
+On Windows, Gemini can be configured interactively from the installation directory with:
+
+```powershell
+.\bin\epos-agent.ps1 -SetupGemini
+```
+
 ## Token-efficient tools
 
 Each user turn starts with only file reading and the internal `epos_load_tools` router. The model calls the router automatically to activate only the required capability. The EPOS MCP is initialized when the agent session starts and is the primary source for EPOS discovery, metadata and downloads; the specialist FDSN MCP remains on demand.
@@ -58,7 +83,7 @@ Catalogue searches, metadata and service descriptions run without confirmation. 
 
 ## Included FDSN service
 
-The service in `services/mcp-fdsnws-event` is installed into a dedicated Python virtual environment by `install.sh`. An explicit event `limit` is respected exactly. Without one, EPOS Agent adaptively partitions the requested time interval until every shard is below the provider result cap, deduplicates event IDs and verifies the oldest/newest boundaries before declaring the JSONL complete. Interrupted or unverifiable requests are retained as clearly marked `.partial.jsonl` files; chat receives the total and at most five samples.
+The service in `services/mcp-fdsnws-event` is installed into a dedicated Python virtual environment by the platform installer. An explicit event `limit` is respected exactly. Without one, EPOS Agent adaptively partitions the requested time interval until every shard is below the provider result cap, deduplicates event IDs and verifies the oldest/newest boundaries before declaring the JSONL complete. Interrupted or unverifiable requests are retained as clearly marked `.partial.jsonl` files; chat receives the total and at most five samples.
 
 Its existing tests can be run with:
 
