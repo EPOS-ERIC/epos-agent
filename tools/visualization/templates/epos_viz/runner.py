@@ -15,7 +15,9 @@ from .recipes import recipe_parameters, validate_configuration
 
 
 def _configuration(bundle: Path) -> dict[str, Any]:
-    path = bundle / "visualization.json"
+    path = bundle / "code" / "visualization.json"
+    if not path.exists():
+        path = bundle / "visualization.json"
     if not path.exists():
         raise ValueError("visualization.json v2 is required")
     return validate_configuration(json.loads(path.read_text(encoding="utf-8")))

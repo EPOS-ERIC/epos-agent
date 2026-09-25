@@ -12,6 +12,8 @@ const PYTHON_EXECUTABLE = process.platform === "win32" ? "python.exe" : "python"
 const FDSN_EXECUTABLE = process.platform === "win32" ? "mcp-fdsnws-event-server.exe" : "mcp-fdsnws-event-server";
 const SYSTEM_PYTHON = process.platform === "win32" ? "py" : "python3";
 const SYSTEM_PYTHON_ARGUMENTS = process.platform === "win32" ? ["-3"] : [];
+const PROV_DIR = join(ROOT, "logs", "provenance");
+const TOKEN_LOG = join(ROOT, "logs", "token-usage.jsonl");
 const FDSN_CMD = join(ROOT, "services", "mcp-fdsnws-event", ".venv", VENV_EXECUTABLE_DIRECTORY, FDSN_EXECUTABLE);
 const EPOS_MCP_PYTHON = join(ROOT, "services", "mcp-epos", ".venv", VENV_EXECUTABLE_DIRECTORY, PYTHON_EXECUTABLE);
 const EPOS_MCP_SERVER = join(ROOT, "services", "mcp-epos", "tools", "epos_mcp_stdio.py");
@@ -205,12 +207,12 @@ function toolPayload(event: any) {
   const text = event.content?.find((item: any) => item.type === "text")?.text;
   if (event.isError && typeof text === "string") {
     try { return JSON.parse(text); }
-    catch {}
+    catch { }
   }
   if (event.details && typeof event.details === "object") return event.details;
   if (typeof text === "string") {
     try { return JSON.parse(text); }
-    catch {}
+    catch { }
   }
   return {};
 }
@@ -259,9 +261,9 @@ function nextConversationState(current: ConversationState, event: any): Conversa
     return { ...current, intent, domain: input.capability === "seismology" ? "seismology" : current.domain, updatedAt: now() };
   }
 
-  if (event.toolName === "epos_mcp_call") {
-    const tool = input.tool;
-    const args = input.arguments && typeof input.arguments === "object" ? input.arguments : {};
+  if (event.toolName === "epos_mcp_call" || ["epos_search", "epos_search_page", "epos_search_filter", "epos_organizations", "epos_details", "epos_select_candidate", "epos_prepare_execute", "epos_execute"].includes(event.toolName)) {
+    const tool = event.toolName === "epos_mcp_call" ? input.tool : event.toolName;
+    const args = event.toolName === "epos_mcp_call" && input.arguments && typeof input.arguments === "object" ? input.arguments : input;
     if (["epos_search", "epos_search_page", "epos_search_filter", "epos_organizations"].includes(tool)) {
       return withArtifacts({
         ...current,
@@ -396,7 +398,7 @@ function resolveWorkspacePath(p: string, relativeBase = WORKSPACE) {
 }
 
 class StdioMcpClient {
-  constructor(private command: string, private args: string[] = [], private cwd = ROOT, private env: NodeJS.ProcessEnv = {}) {}
+  constructor(private command: string, private args: string[] = [], private cwd = ROOT, private env: NodeJS.ProcessEnv = {}) { }
   private proc?: ChildProcessWithoutNullStreams;
   private rl?: Interface;
   private nextId = 1;
@@ -424,7 +426,7 @@ class StdioMcpClient {
           const p = this.pending.get(msg.id)!; this.pending.delete(msg.id);
           msg.error ? p.reject(new Error(JSON.stringify(msg.error))) : p.resolve(msg.result);
         }
-      } catch {}
+      } catch { }
     });
     await this.request("initialize", { protocolVersion: MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "epos-agent", version: "0.2.0" } });
     this.notify("notifications/initialized", {});
@@ -450,7 +452,7 @@ async function eposMcpCall(toolName: string, args: Record<string, unknown>) {
     const text = response.content?.find((c: any) => c.type === "text")?.text || `EPOS MCP tool failed: ${toolName}`;
     const error = new Error(text);
     try { Object.assign(error, JSON.parse(text)); }
-    catch {}
+    catch { }
     throw error;
   }
   if (response?.structuredContent) return response.structuredContent;
@@ -477,6 +479,9 @@ async function imageBlock(path: string) {
 
 function now() { return new Date().toISOString(); }
 async function logProvenance(record: Record<string, unknown>) {
+  await mkdir(PROV_DIR, { recursive: true });
+  const file = join(PROV_DIR, `${new Date().toISOString().replace(/[:.]/g, "-")}-${record.action || "epos"}.json`);
+  await writeFile(file, JSON.stringify(record, null, 2));
   return record;
 }
 function modelResult(payload: unknown, modelPayload: unknown = payload) {
@@ -489,9 +494,9 @@ async function resultWithProvenance(action: string, parameters: Record<string, u
   const source = payload?.provenance || {};
   const record = { action, timestamp: source.retrievedAt || now(), parameters, ...source };
   const provenanceRecord = await logProvenance(record);
-  const result = { ...payload, provenance: { ...record, provenanceFile } };
+  const result = { ...payload, provenance: { ...record, provenanceRecord } };
   const modelProvenance = withoutEmptyValues({ ...record, parameters: undefined });
-  const modelPayload = withoutEmptyValues({ ...payload, provenance: { ...(modelProvenance as object), provenanceFile } }) || {};
+  const modelPayload = withoutEmptyValues({ ...payload, provenance: { ...(modelProvenance as object), provenanceRecord } }) || {};
   return modelResult(result, modelPayload);
 }
 function parseMcpPayload(result: any) {
@@ -609,12 +614,7 @@ async function writeStudyDocuments(state: ConversationState) {
   };
   await writeFile(join(study.bundlePath, "metadata", "manifest.json"), JSON.stringify(manifest, null, 2));
   await writeFile(join(study.bundlePath, "metadata", "parameters.json"), JSON.stringify({ filters: state.filters, format: state.format }, null, 2));
-  const provenanceRecords: unknown[] = [];
-  for (const path of state.provenanceFiles) {
-    try { provenanceRecords.push(JSON.parse(await readFile(path, "utf8"))); }
-    catch { provenanceRecords.push({ provenanceFile: path, readable: false }); }
-  }
-  await writeFile(join(study.bundlePath, "metadata", "provenance.json"), JSON.stringify({ records: provenanceRecords }, null, 2));
+  await writeFile(join(study.bundlePath, "metadata", "provenance.json"), JSON.stringify({ records: state.provenanceRecords }, null, 2));
   const reproduce = study.visualizationVersion === 2
     ? "Run `analysis.py` through EPOS Agent. A notebook is generated only after the analysis succeeds."
     : `Run \`python3 analysis.py\` from this directory or open \`${study.slug}.ipynb\`.`;
@@ -975,8 +975,8 @@ const nativeEposSearchPageTool = defineTool({
 const nativeEposSelectCandidateTool = defineTool({
   name: "epos_select_candidate",
   label: "EPOS Select Candidate",
-  description: "Mark a distribution ID as a candidate for current study requirements.",
-  parameters: Type.Object({ distribution_id: Type.String() }),
+  description: "Select a cached search candidate by its result index.",
+  parameters: Type.Object({ search_id: Type.String(), index: Type.Integer() }),
   async execute(_id: string, args: any) { return executeEposProxy("epos_select_candidate", args); }
 });
 
@@ -1013,7 +1013,7 @@ const nativeEposPrepareExecuteTool = defineTool({
   label: "EPOS Prepare Execute",
   description: "Prepare to execute an EPOS service.",
   parameters: Type.Object({
-    distribution_id: Type.String(), format: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()), endDate: Type.Optional(Type.String()), bbox: Type.Optional(Type.String()), useDefaults: Type.Optional(Type.String()), pluginId: Type.Optional(Type.String()), inputFormat: Type.Optional(Type.String())
+    distribution_id: Type.String(), params: Type.Optional(Type.String({ description: "JSON object encoded as a string" })), format: Type.Optional(Type.String()), startDate: Type.Optional(Type.String()), endDate: Type.Optional(Type.String()), bbox: Type.Optional(Type.String()), useDefaults: Type.Optional(Type.String()), pluginId: Type.Optional(Type.String()), inputFormat: Type.Optional(Type.String())
   }),
   async execute(_id: string, args: any) { return executeEposProxy("epos_prepare_execute", args); }
 });
@@ -1022,7 +1022,7 @@ const nativeEposExecuteTool = defineTool({
   name: "epos_execute",
   label: "EPOS Execute",
   description: "Execute an EPOS service.",
-  parameters: Type.Object({ distribution_id: Type.String(), request_payload: Type.Any() }),
+  parameters: Type.Object({ plan_id: Type.String(), confirm: Type.Optional(Type.Boolean()), params: Type.Optional(Type.Any()) }),
   async execute(_id: string, args: any) { return executeEposProxy("epos_execute", args); }
 });
 
@@ -1168,14 +1168,16 @@ const finalizeNotebookTool = defineTool({
         { id: "install-dependencies", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["%pip install -r requirements.txt\n"] },
         { id: "study-context", cell_type: "markdown", metadata: {}, source: [`# ${study.title}\n`, `${study.scientificQuestion || "Scientific question not yet defined."}\n`] },
         { id: "run-analysis", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["import sys\n", "sys.path.append('../code')\n", "from analysis import main\n", "report = main()\n", "report\n"] },
-        { id: "display-outputs", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: [
-          "from pathlib import Path\n",
-          "from IPython.display import Image, Markdown, display\n",
-          "for output in report['outputs']:\n",
-          "    path = Path(output)\n",
-          "    link = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path\n",
-          "    display(Image(filename=str(path))) if path.suffix.lower() == '.png' else display(Markdown(f'[{path.name}]({link.as_posix()})'))\n",
-        ] },
+        {
+          id: "display-outputs", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: [
+            "from pathlib import Path\n",
+            "from IPython.display import Image, Markdown, display\n",
+            "for output in report['outputs']:\n",
+            "    path = Path(output)\n",
+            "    link = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path\n",
+            "    display(Image(filename=str(path))) if path.suffix.lower() == '.png' else display(Markdown(f'[{path.name}]({link.as_posix()})'))\n",
+          ]
+        },
       ],
       metadata: { kernelspec: { display_name: "Python 3", language: "python", name: "python3" }, language_info: { name: "python", version: "3" } },
       nbformat: 4,
@@ -1216,7 +1218,7 @@ const runPythonTool = defineTool({
     const expectedReportPath = !temporaryScript && resolve(script) === join(executionDirectory, "analysis.py")
       ? join(executionDirectory, "analysis-report.json")
       : undefined;
-    if (expectedReportPath) await unlink(expectedReportPath).catch(() => {});
+    if (expectedReportPath) await unlink(expectedReportPath).catch(() => { });
     let stdout = "";
     let stderr = "";
     const python = await analysisPython();
@@ -1229,7 +1231,7 @@ const runPythonTool = defineTool({
         signal,
       }));
     } finally {
-      if (temporaryScript) await unlink(script).catch(() => {});
+      if (temporaryScript) await unlink(script).catch(() => { });
     }
     let outputs: string[] = [];
     let reportPath: string | undefined;
@@ -1242,7 +1244,7 @@ const runPythonTool = defineTool({
     }
     const record = { action: "run-python", timestamp: now(), workspace: executionDirectory, script: temporaryScript ? undefined : script, generatedCode: temporaryScript, args, timeoutMs: timeout, stdoutBytes: stdout.length, stderrBytes: stderr.length, outputImagePath: params.outputImagePath, reportPath, outputs };
     const provenanceRecord = await logProvenance(record);
-    const fullResult = { provenance: { ...record, provenanceFile }, stdout, stderr, reportPath, outputs };
+    const fullResult = { provenance: { ...record, provenanceRecord }, stdout, stderr, reportPath, outputs };
     const serialized = JSON.stringify(fullResult);
     let outputLog: string | undefined;
     let chatResult: unknown = fullResult;
@@ -1481,15 +1483,15 @@ const fdsnMcpTool = defineTool({
         coverage,
       };
       const provenanceRecord = await logProvenance(record);
-      return modelResult({ recordCount, pageCount, shardCount, splitCount, bytes, outputFile, complete: true, datasetCompleteness, coverage, sample, provenance: { ...record, provenanceFile } });
+      return modelResult({ recordCount, pageCount, shardCount, splitCount, bytes, outputFile, complete: true, datasetCompleteness, coverage, sample, provenance: { ...record, provenanceRecord } });
     } catch (error) {
-      await file.close().catch(() => {});
+      await file.close().catch(() => { });
       let retainedFile: string | undefined;
       if (recordCount > 0) {
         await rename(outputFile, partialFile);
         retainedFile = partialFile;
       } else {
-        await unlink(outputFile).catch(() => {});
+        await unlink(outputFile).catch(() => { });
       }
       const record = {
         action: "fdsn-query",
@@ -1511,7 +1513,7 @@ const fdsnMcpTool = defineTool({
         error: error instanceof Error ? error.message : String(error),
       };
       const provenanceRecord = await logProvenance(record);
-      throw new Error(JSON.stringify({ code: "FDSN_PARTIAL_DOWNLOAD", complete: false, datasetCompleteness: "partial", recordCount, pageCount, shardCount, splitCount, bytes, outputFile: retainedFile, provenanceFile, coverage: record.coverage, error: record.error }));
+      throw new Error(JSON.stringify({ code: "FDSN_PARTIAL_DOWNLOAD", complete: false, datasetCompleteness: "partial", recordCount, pageCount, shardCount, splitCount, bytes, outputFile: retainedFile, provenanceRecord, coverage: record.coverage, error: record.error }));
     }
   },
 });
@@ -1591,7 +1593,8 @@ export default function (pi: ExtensionAPI) {
       total: usage.totalTokens,
       cost: usage.cost,
     };
-        await appendFile(TOKEN_LOG, JSON.stringify(record) + "\n");
+    await mkdir(join(ROOT, "logs"), { recursive: true });
+    await appendFile(TOKEN_LOG, JSON.stringify(record) + "\n");
   });
   pi.on("session_shutdown", async () => { await Promise.all([mcp.stop(), eposMcp.stop()]); });
   pi.on("tool_result", async (event) => {
