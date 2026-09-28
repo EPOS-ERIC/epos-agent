@@ -8,48 +8,52 @@ EPOS Agent is a model-agnostic terminal assistant for discovering and using EPOS
 
 ## Quick start (Windows)
 
-On Windows 10 or 11, open PowerShell and run:
+On Windows 10 or 11, open PowerShell and follow these steps to clone, install and start the agent:
 
+1. **Clone the repository:**
 ```powershell
-irm https://raw.githubusercontent.com/danielebailo/epos-agent/main/install.ps1 | iex
+git clone https://github.com/danielebailo/epos-agent.git
+cd epos-agent
 ```
 
-The installer requires PowerShell 5.1 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer). It installs or updates Git, Node.js and Python when needed, clones EPOS Agent into `%USERPROFILE%\epos-agent`, creates its local runtimes, and adds `EPOS Agent.cmd` to your Desktop. Start the agent by double-clicking that file.
-
-To use a different installation directory, set `EPOS_INSTALL_ROOT` before running the command:
-
+2. **Run the installation:**
 ```powershell
-$env:EPOS_INSTALL_ROOT = "C:\EPOS Agent"
-irm https://raw.githubusercontent.com/danielebailo/epos-agent/main/install.ps1 | iex
+.\install.ps1
+```
+*The installer requires PowerShell 5.1 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer). It installs or updates Git, Node.js and Python when needed, and creates its local runtimes under `%USERPROFILE%\epos-agent`.*
+
+3. **Start the agent:**
+Start the agent by running the following command in your terminal:
+```powershell
+~\epos-agent\bin\epos-agent.ps1
 ```
 
-Existing installations are updated only when they are an unchanged clone of the official repository. Your configuration, sessions, logs and workspace data are preserved.
+*(To use a different installation directory, set `$env:EPOS_INSTALL_ROOT = "C:\EPOS Agent"` before running `.\install.ps1`. Existing installations are updated automatically preserving your configuration and workspace data.)*
 
 ## Quick start (macOS/Linux)
 
-The installer checks for these requirements:
+The installer checks for Node.js (**22.19.0 or newer**), Python (**3.11 or newer**), Git, npm and rsync. If dependencies are missing, `install.sh` asks for permission and installs them using Homebrew (macOS) or your native package manager (Linux). For unattended installation, use `EPOS_AUTO_INSTALL=1`.
 
-- Node.js **22.19.0 or newer**
-- Python **3.11 or newer**
-- Git, npm and rsync
+Open your terminal and follow these steps:
 
-If dependencies are missing, `install.sh` asks for permission and installs Homebrew if needed, then Node.js/Python/Git/rsync on macOS. On Linux it uses the available package manager (`apt`, `dnf` or `pacman`). For unattended installation, use `EPOS_AUTO_INSTALL=1`.
+1. **Clone the repository:**
+```bash
+git clone https://github.com/danielebailo/epos-agent.git
+cd epos-agent
+```
 
-From the repository directory:
-
+2. **Run the installation:**
 ```bash
 ./install.sh
+```
+*The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, creates isolated Python environments for the bundled services and reusable visualization pipeline, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.*
+
+3. **Start the agent:**
+```bash
 ~/epos-agent/bin/epos-agent
 ```
 
-The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, creates isolated Python environments for the bundled services and reusable visualization pipeline, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.
-
-To test another installation location without touching an existing installation:
-
-```bash
-EPOS_INSTALL_ROOT=/tmp/epos-agent-test ./install.sh
-EPOS_AGENT_ROOT=/tmp/epos-agent-test /tmp/epos-agent-test/bin/epos-agent
-```
+*(To test another installation location without touching an existing installation, run `EPOS_INSTALL_ROOT=/tmp/epos-agent-test ./install.sh` and start it with `EPOS_AGENT_ROOT=/tmp/epos-agent-test /tmp/epos-agent-test/bin/epos-agent`)*
 
 ## Configuration
 

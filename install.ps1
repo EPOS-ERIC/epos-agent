@@ -213,26 +213,8 @@ function Install-Application([object]$Python) {
   Set-Content -LiteralPath (Join-Path $InstallRoot ".epos-agent-installation") -Value "EPOS_AGENT_ROOT=$InstallRoot" -Encoding ASCII
 }
 
-function New-DesktopLauncher {
-  $desktop = [Environment]::GetFolderPath([Environment+SpecialFolder]::DesktopDirectory)
-  if (-not $desktop) { Stop-Install "Could not determine the current user's Desktop directory." }
-  $launcherPath = Join-Path $desktop "EPOS Agent.cmd"
-  $launcherScript = Join-Path $InstallRoot "bin/epos-agent.ps1"
-  $content = @(
-    "@echo off",
-    "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$launcherScript`"",
-    "set `"EPOS_EXIT_CODE=%ERRORLEVEL%`"",
-    "echo.",
-    "pause",
-    "exit /b %EPOS_EXIT_CODE%"
-  )
-  Set-Content -LiteralPath $launcherPath -Value $content -Encoding ASCII
-  Write-Status "Created Desktop launcher: $launcherPath"
-}
-
 Write-Status "Preparing native Windows installation in $InstallRoot"
 $python = Ensure-Prerequisites
 Get-Repository
 Install-Application $python
-New-DesktopLauncher
-Write-Status "Installation completed. Start EPOS Agent by double-clicking EPOS Agent.cmd on your Desktop."
+Write-Status "Installation completed. Start EPOS Agent by running: ~\epos-agent\bin\epos-agent.ps1"
