@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [switch]$SetupGemini
 )
@@ -87,8 +87,33 @@ $model = if ($env:EPOS_MODEL) { $env:EPOS_MODEL } else { $env:PI_MODEL }
 $thinking = if ($env:EPOS_THINKING) { $env:EPOS_THINKING } else { $env:PI_REASONING_LEVEL }
 
 Clear-Host
-Write-Host "EPOS Agent - European Plate Observing System" -ForegroundColor DarkYellow
-Write-Host "Solid Earth data services, metadata, provenance and discovery" -ForegroundColor DarkGreen
+$escape = [char]27
+$green = "${escape}[38;2;43;66;45m"
+$gold = "${escape}[38;2;198;148;54m"
+$white = "${escape}[38;2;255;255;255m"
+$dim = "${escape}[38;2;111;138;115m"
+$reset = "${escape}[0m"
+$banner = @"
+${green}╔══════════════════════════════════════════════════════════════════════════════════╗${reset}
+${green}║${reset}                                                                                  ${green}║${reset}
+${green}║${reset}                   ${gold}●●●•${reset}${dim}∙·‧${reset}${white}███████╗██████╗${dim}·${reset}${white} ██████╗${dim}·${reset}${white}███████╗${reset}                       ${green}║${reset}
+${green}║${reset}               ${gold}●●●●●●●•${reset}${dim}∙·‧${reset}${white}██╔════╝██╔══██╗██╔═══██╗██╔════╝${reset}                       ${green}║${reset}
+${green}║${reset}              ${gold}●●●●●●●●•${reset}${dim}∙·‧${reset}${white}█████╗${dim}·${reset}${white} ██████╔╝██║ ${dim}·${reset}${white} ██║███████╗${reset}                       ${green}║${reset}
+${green}║${reset}              ${gold}●●●●●●●●•${reset}${dim}∙·‧${reset}${white}██╔══╝ ${dim}·${reset}${white}██╔═══╝ ██║ ${dim}·${reset}${white}██║╚════██║${reset}                       ${green}║${reset}
+${green}║${reset}                ${gold}●●●●●●•${reset}${dim}∙·‧${reset}${white}███████╗██║  ${dim}‧${reset}${white}  ╚██████╔╝███████║${reset}                       ${green}║${reset}
+${green}║${reset}                   ${gold}●●●•${reset}${dim}∙·‧${reset}${white}╚══════╝╚═╝  ${dim}·${reset}${white}   ╚═════╝ ╚══════╝${reset}                       ${green}║${reset}
+${green}║${reset}                                                                                  ${green}║${reset}
+${green}║${reset}                         ${gold}EUROPEAN PLATE OBSERVING SYSTEM${reset}                          ${green}║${reset}
+${green}║${reset}                     ${gold}────────────────────────────────────────${reset}                     ${green}║${reset}
+${green}║${reset}                               ${white}EPOS Agent · ${reset}${gold}V1.0.1${reset}                                ${green}║${reset}
+${green}║${reset}                                                                                  ${green}║${reset}
+${green}║${reset}          ${white}Solid Earth data services, metadata, provenance and discovery${reset}           ${green}║${reset}
+${green}║${reset}                                                                                  ${green}║${reset}
+${green}║${reset}             ${white}Search${reset} ${gold}│${reset} ${white}Describe${reset} ${gold}│${reset} ${white}Validate${reset} ${gold}│${reset} ${white}Execute${reset} ${gold}│${reset} ${white}Cite provenance${reset}             ${green}║${reset}
+${green}║${reset}                                                                                  ${green}║${reset}
+${green}╚══════════════════════════════════════════════════════════════════════════════════╝${reset}
+"@
+Write-Host $banner
 Write-Host ""
 
 $env:EPOS_AGENT_ROOT = $Root
