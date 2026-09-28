@@ -179,7 +179,7 @@ function Install-Application([object]$Python) {
 
   $environments = @(
     @{ Name = "EPOS MCP"; Path = "services/mcp-epos/.venv"; Requirements = "services/mcp-epos/requirements.txt" },
-    @{ Name = "FDSN MCP"; Path = "services/mcp-fdsnws-event/.venv"; Package = "services/mcp-fdsnws-event" },
+    @{ Name = "FDSN MCP"; Path = "services/mcp-fdsnws-event/.venv"; Requirements = $null; Package = "services/mcp-fdsnws-event" },
     @{ Name = "EPOS visualizations"; Path = "tools/visualization/.venv"; Requirements = "tools/visualization/requirements-core.txt" }
   )
   foreach ($environment in $environments) {

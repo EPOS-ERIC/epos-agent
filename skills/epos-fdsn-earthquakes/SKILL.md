@@ -13,7 +13,7 @@ Collect missing scientific filters in the workflow's single initial question blo
 2. Find and use the seismic event with the highest relevance in the catalog as the center.
 3. Manually provide the latitude and longitude coordinates.
 
-Pass `limit` ONLY when the researcher explicitly requests a maximum count. NEVER do a "partial" or "preview" download first, and NEVER attempt to manually chunk the time interval (e.g., by proposing to download 2 days at a time). The tool ALREADY automatically handles pagination, dense intervals, and deduplication internally to get all events in one go. Just call the tool with the full time range requested.
+Pass `limit` ONLY when the researcher explicitly requests a maximum count. NEVER do a "partial" or "preview" download first, and NEVER attempt to manually chunk the time interval. The tool ALREADY automatically handles pagination, dense intervals, and deduplication internally to get all events in one go. Just call the tool with the full time range requested.
 
 Event identifiers are opaque and provider-specific. Copy them exactly and never reuse an identifier with a different datacenter.
 
