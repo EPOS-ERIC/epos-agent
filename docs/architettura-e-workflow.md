@@ -97,6 +97,7 @@ La skill originale ricevuta con il progetto citava strumenti come
 di questa codebase: erano riferimenti del progetto di provenienza della skill.
 Le sue regole utili sono state adattate ai tool Pi/MCP realmente disponibili;
 non si tenta di invocare quei tool inesistenti.
+```
 
 ## 4. Architettura delle skill e caricamento progressivo
 
