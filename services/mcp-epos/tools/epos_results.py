@@ -162,6 +162,7 @@ def summarize_details(payload: Any) -> dict[str, Any]:
                         key: parameter[key]
                         for key in (
                             "name",
+                            "property",
                             "label",
                             "required",
                             "type",

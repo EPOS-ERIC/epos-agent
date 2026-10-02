@@ -177,5 +177,7 @@ def run(bundle: Path | str) -> dict[str, Any]:
     report = {"version": 2, "recipe": config["recipe"], "datasets": [dataset.summary() for dataset in datasets], "inputs": inputs,
               "outputs": outputs, "warnings": warnings, "dependencies": sorted(dependencies), "libraryVersions": _versions(dependencies),
               "metrics": config.get("_runtime", {})}
-    (root / "analysis-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    metadata = root / "metadata"
+    metadata.mkdir(exist_ok=True)
+    (metadata / "analysis-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report

@@ -444,16 +444,57 @@ async def tool_search(args: dict[str, Any]) -> dict[str, Any]:
         return error(f"Gateway error {response['status']}.")
     artifact = save("search", response["body"], response["ct"])
     try:
-        candidates = rank(
-            normalized_candidates(json.loads(response["text"])), str(args.get("q", ""))
-        )
+        primary_candidates = normalized_candidates(json.loads(response["text"]))
     except json.JSONDecodeError:
         return result({"message": "Search response was not JSON.", **artifact})
+
+    fallback_queries: list[str] = []
+    candidates_by_id = {
+        candidate["distribution_id"]: candidate for candidate in primary_candidates
+    }
+    query = str(args.get("q", ""))
+    terms = list(dict.fromkeys(re.findall(r"[\w-]{3,}", query.casefold())))[:6]
+    if len(primary_candidates) < 5 and len(terms) > 1:
+        base_pairs = [(key, value) for key, value in pairs if key != "q"]
+        for term in terms:
+            fallback = await http_get(
+                EPOS_API_BASE
+                + "/resources/search?"
+                + urllib.parse.urlencode([*base_pairs, ("q", term)])
+            )
+            if not fallback["ok"]:
+                continue
+            try:
+                fallback_candidates = normalized_candidates(json.loads(fallback["text"]))
+            except json.JSONDecodeError:
+                continue
+            fallback_queries.append(term)
+            for candidate in fallback_candidates:
+                candidates_by_id.setdefault(candidate["distribution_id"], candidate)
+
+    excluded = {
+        item.strip()
+        for item in str(args.get("exclude_distribution_ids", "")).split(",")
+        if item.strip()
+    }
+    candidates = rank(
+        [
+            candidate
+            for candidate in candidates_by_id.values()
+            if candidate["distribution_id"] not in excluded
+        ],
+        query,
+    )
     search_id = STATE.put(
-        "search", {"candidates": candidates, "query": str(args.get("q", ""))}
+        "search", {"candidates": candidates, "query": query}
     )
     return result(
-        {"search_id": search_id, **artifact, **window(candidates, limit, offset)}
+        {
+            "search_id": search_id,
+            "fallback_queries": fallback_queries,
+            **artifact,
+            **window(candidates, limit, offset),
+        }
     )
 
 
@@ -635,6 +676,50 @@ def bbox_area(value: Any) -> float | None:
         return None
 
 
+def bbox_coordinates(value: Any) -> tuple[float, float, float, float] | None:
+    try:
+        west, south, east, north = map(
+            float, value.split(",") if isinstance(value, str) else value
+        )
+        return (
+            (west, south, east, north)
+            if -180 <= west <= east <= 180 and -90 <= south <= north <= 90
+            else None
+        )
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_declared_filters(
+    params: dict[str, Any], declared: dict[str, dict[str, Any]], start: Any, end: Any, bbox: Any
+) -> None:
+    properties = {
+        str(specification.get("property", "")).casefold(): name
+        for name, specification in declared.items()
+    }
+    for property_name, value in (
+        ("schema:startdate", start),
+        ("schema:enddate", end),
+    ):
+        name = properties.get(property_name)
+        if name and value and name not in params:
+            params[name] = value
+    coordinates = bbox_coordinates(bbox)
+    if coordinates:
+        for property_name, value in zip(
+            (
+                "epos:westernmostlongitude",
+                "epos:southernmostlatitude",
+                "epos:easternmostlongitude",
+                "epos:northernmostlatitude",
+            ),
+            coordinates,
+        ):
+            name = properties.get(property_name)
+            if name and name not in params:
+                params[name] = value
+
+
 def validate_value(name: str, value: Any, d: dict[str, Any]) -> str | None:
     if value in (None, "") and d.get("required") not in (True, "true", 1):
         return None
@@ -774,6 +859,12 @@ async def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
         return error("Distribution details were not JSON.")
     known = {x["name"]: x for x in declared_parameters(metadata)}
     resolved = dict(params)
+    start, end, bbox = (
+        args.get("startDate", ""),
+        args.get("endDate", ""),
+        args.get("bbox", ""),
+    )
+    apply_declared_filters(resolved, known, start, end, bbox)
     option, formats = execution_option(metadata, str(args.get("format", "")))
     option_query = urllib.parse.parse_qs(
         urllib.parse.urlparse(str((option or {}).get("href", ""))).query
@@ -819,11 +910,6 @@ async def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
         reasons.append({"field": "format", "reason": "format is not available"})
     if not fmt and option is None and len(formats) > 1:
         reasons.append({"field": "format", "reason": "select one available format"})
-    start, end, bbox = (
-        args.get("startDate", ""),
-        args.get("endDate", ""),
-        args.get("bbox", ""),
-    )
     days = (
         (parse_date(end) - parse_date(start)).total_seconds() / 86400
         if parse_date(start) and parse_date(end)
@@ -944,18 +1030,19 @@ async def tool_execute(args: dict[str, Any]) -> dict[str, Any]:
         f"{EPOS_API_BASE}/{plan['execution_path']}/{urllib.parse.quote(plan['distribution_id'], safe='')}"
         + ("?" + urllib.parse.urlencode(pairs) if pairs else "")
     )
-    response = await http_get(url, 120)
-    if (
-        plan["execution_path"] == "ogcexecute"
-        and 300 <= int(response.get("status", 0)) < 400
-        and response.get("location")
-    ):
-        redirect = public_http_url(urllib.parse.urljoin(url, response["location"]))
+    request_url = url
+    for _ in range(5):
+        response = await http_get(request_url, 120)
+        if not 300 <= int(response.get("status", 0)) < 400:
+            break
+        redirect = public_http_url(
+            urllib.parse.urljoin(request_url, response.get("location", ""))
+        )
         if not redirect:
-            return error(
-                "EPOS OGC redirect did not resolve to a public HTTP/HTTPS URL."
-            )
-        response = await http_get(redirect, 120)
+            return error("EPOS redirect did not resolve to a public HTTP/HTTPS URL.")
+        request_url = redirect
+    else:
+        return error("EPOS execution exceeded the maximum redirect limit.")
     if not response["ok"]:
         return error(
             f"Gateway error {response['status']}: {response.get('error', 'unknown error')}"
@@ -1105,6 +1192,7 @@ def make_server(tool_profile: str | None = None) -> MCPServer:
         bbox: str = "",
         facetstype: str = "",
         facets: str = "",
+        exclude_distribution_ids: str = "",
         limit: int = 12,
     ) -> dict[str, Any]:
         return await invoke("epos_search", locals())

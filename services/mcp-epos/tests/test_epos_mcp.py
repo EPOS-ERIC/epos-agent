@@ -7,7 +7,11 @@ import urllib.parse
 from pathlib import Path
 
 import tools.epos_mcp_http as m
-from tools.epos_results import normalized_candidates, summarize_organizations
+from tools.epos_results import (
+    declared_parameters,
+    normalized_candidates,
+    summarize_organizations,
+)
 
 
 class MCPUnitTests(unittest.IsolatedAsyncioTestCase):
@@ -90,6 +94,10 @@ class MCPUnitTests(unittest.IsolatedAsyncioTestCase):
                 {"search_id": search["search_id"], "format": "application/json"}
             )
             self.assertEqual(filtered["total_candidates"], 1)
+            alternatives = await m.tool_search(
+                {"q": "earthquake", "exclude_distribution_ids": "a"}
+            )
+            self.assertEqual(alternatives["candidates"][0]["distribution_id"], "b")
             other = m.PRINCIPAL.set(
                 {
                     "name": "bob",
@@ -107,6 +115,129 @@ class MCPUnitTests(unittest.IsolatedAsyncioTestCase):
             m.PRINCIPAL.reset(other)
         finally:
             m.http_get = old
+
+    async def test_sparse_composite_query_falls_back_to_term_union(self):
+        async def sparse_get(url, timeout=60):
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get(
+                "q", [""]
+            )[0]
+            items = {
+                "earthquake events italy": [
+                    {"id": "a", "title": "Earthquake catalog"}
+                ],
+                "earthquake": [{"id": "a", "title": "Earthquake catalog"}],
+                "events": [{"id": "b", "title": "Event archive"}],
+                "italy": [],
+            }[query]
+            body = json.dumps({"results": {"distributions": items}}).encode()
+            return {
+                "ok": True,
+                "body": body,
+                "text": body.decode(),
+                "ct": "application/json",
+                "bytes": len(body),
+            }
+
+        old = m.http_get
+        m.http_get = sparse_get
+        try:
+            search = await m.tool_search({"q": "earthquake events italy"})
+            self.assertEqual(search["fallback_queries"], ["earthquake", "events", "italy"])
+            self.assertEqual(search["total_candidates"], 2)
+            self.assertEqual(
+                {candidate["distribution_id"] for candidate in search["candidates"]},
+                {"a", "b"},
+            )
+        finally:
+            m.http_get = old
+
+    def test_declared_filters_map_dates_and_bbox_without_overriding_params(self):
+        params = {"minmagnitude": 1, "maxlatitude": 99}
+        declared = {
+            parameter["name"]: parameter
+            for parameter in declared_parameters(
+                {
+                    "serviceParameters": [
+                        {"name": "starttime", "property": "schema:startDate"},
+                        {"name": "endtime", "property": "schema:endDate"},
+                        {"name": "minlatitude", "property": "epos:southernmostLatitude"},
+                        {"name": "maxlatitude", "property": "epos:northernmostLatitude"},
+                        {"name": "minlongitude", "property": "epos:westernmostLongitude"},
+                        {"name": "maxlongitude", "property": "epos:easternmostLongitude"},
+                    ]
+                }
+            )
+        }
+        m.apply_declared_filters(
+            params,
+            declared,
+            "2016-01-01T00:00:00",
+            "2017-01-01T00:00:00",
+            "12.0,42.2,14.0,43.5",
+        )
+        self.assertEqual(
+            params,
+            {
+                "minmagnitude": 1,
+                "starttime": "2016-01-01T00:00:00",
+                "endtime": "2017-01-01T00:00:00",
+                "minlatitude": 42.2,
+                "maxlatitude": 99,
+                "minlongitude": 12.0,
+                "maxlongitude": 14.0,
+            },
+        )
+
+    async def test_execute_follows_redirect_for_non_ogc_service(self):
+        calls = []
+
+        async def redirected(url, timeout=60):
+            calls.append(url)
+            if len(calls) == 1:
+                return {
+                    "ok": True,
+                    "status": 302,
+                    "location": "https://provider.example/events",
+                    "body": b"{}",
+                    "text": "{}",
+                    "ct": "application/json",
+                    "bytes": 2,
+                }
+            body = b"event data"
+            return {
+                "ok": True,
+                "status": 200,
+                "location": "",
+                "body": body,
+                "text": body.decode(),
+                "ct": "text/plain",
+                "bytes": len(body),
+            }
+
+        plan_id = m.STATE.put(
+            "plan",
+            {
+                "distribution_id": "event-service",
+                "execution_path": "execute",
+                "params": {},
+                "format": "text",
+                "inputFormat": "",
+                "pluginId": "",
+                "startDate": "",
+                "endDate": "",
+                "bbox": "",
+                "useDefaults": "",
+                "requires_confirmation": False,
+            },
+        )
+        old, old_public = m.http_get, m.public_http_url
+        m.http_get, m.public_http_url = redirected, lambda value: value
+        try:
+            result = await m.tool_execute({"plan_id": plan_id})
+            self.assertEqual(result["bytes"], len(b"event data"))
+            self.assertEqual(calls[-1], "https://provider.example/events")
+        finally:
+            m.http_get, m.public_http_url = old, old_public
 
     async def test_preflight_constraints_and_confirmation(self):
         old = m.http_get

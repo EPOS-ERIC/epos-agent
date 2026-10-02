@@ -945,7 +945,7 @@ async function executeEposProxy(toolName: string, args: any, metadataOnly: boole
 const nativeEposSearchTool = defineTool({
   name: "epos_search",
   label: "EPOS Search",
-  description: "Search EPOS distributions.",
+  description: "Search one page of EPOS distributions. Inspect every subsequent page returned by next_offset before concluding that a service is unavailable or choosing candidates. For a confirmed alternative search after a partial study, pass the attempted distribution IDs through exclude_distribution_ids.",
   parameters: Type.Object({
     q: Type.Optional(Type.String({ description: "Free-text query" })),
     keywords: Type.Optional(Type.String({ description: "Comma-separated keywords" })),
@@ -957,6 +957,7 @@ const nativeEposSearchTool = defineTool({
     bbox: Type.Optional(Type.String({ description: "Bounding box: west,south,east,north" })),
     facetstype: Type.Optional(Type.String({ description: "categories, dataproviders, serviceproviders" })),
     facets: Type.Optional(Type.String({ description: "true or false" })),
+    exclude_distribution_ids: Type.Optional(Type.String({ description: "Comma-separated distribution IDs to omit from this search" })),
     limit: Type.Optional(Type.Integer({ description: "Number of results per page" }))
   }),
   async execute(_id: string, args: any) { return executeEposProxy("epos_search", args); }
@@ -965,7 +966,7 @@ const nativeEposSearchTool = defineTool({
 const nativeEposSearchPageTool = defineTool({
   name: "epos_search_page",
   label: "EPOS Search Page",
-  description: "Get a specific page of search results.",
+  description: "Get the next page of a cached EPOS search. Continue using next_offset until it is null so the complete result set is available for comparison.",
   parameters: Type.Object({
     search_id: Type.String(), offset: Type.Optional(Type.Integer()), limit: Type.Optional(Type.Integer())
   }),
@@ -1216,7 +1217,7 @@ const runPythonTool = defineTool({
     const timeout = Math.max(1000, Math.min(Number(params.timeoutMs || 60000), 300000));
     const args = Array.isArray(params.args) ? params.args : [];
     const expectedReportPath = !temporaryScript && resolve(script) === join(executionDirectory, "analysis.py")
-      ? join(executionDirectory, "analysis-report.json")
+      ? join(executionDirectory, "metadata", "analysis-report.json")
       : undefined;
     if (expectedReportPath) await unlink(expectedReportPath).catch(() => { });
     let stdout = "";

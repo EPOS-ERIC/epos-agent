@@ -74,6 +74,7 @@ class DataAndPlotTests(unittest.TestCase):
         self.assertLess(report["outputs"].index(str(self.bundle / "figures" / "static-map.png")),
                         report["outputs"].index(str(self.bundle / "figures" / "interactive-map.html")))
         self.assertTrue(any(path.endswith("-time-series.png") for path in report["outputs"]))
+        self.assertTrue((self.bundle / "metadata" / "analysis-report.json").exists())
         self.assertTrue(report["inputs"][0]["sha256"])
         csv_summary = report["datasets"][0]
         self.assertEqual(csv_summary["excludedCoordinates"], 1)
@@ -172,7 +173,7 @@ class RequirementTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.bundle = Path(self.temporary.name)
-        (self.bundle / "epos_viz").mkdir()
+        (self.bundle / "code" / "epos_viz").mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -180,14 +181,14 @@ class RequirementTests(unittest.TestCase):
     def test_stdlib_and_local_imports_are_excluded(self) -> None:
         from sync_requirements import imported_modules
 
-        source = self.bundle / "analysis.py"
+        source = self.bundle / "code" / "analysis.py"
         source.write_text("import json\nfrom pathlib import Path\nfrom epos_viz import run\nimport pandas as pd\n", encoding="utf-8")
         self.assertEqual(imported_modules([source]), {"json", "pathlib", "epos_viz", "pandas"})
 
     def test_unknown_import_is_rejected(self) -> None:
         from sync_requirements import requirements_for_bundle
 
-        (self.bundle / "analysis.py").write_text("import unknown_science_package\n", encoding="utf-8")
+        (self.bundle / "code" / "analysis.py").write_text("import unknown_science_package\n", encoding="utf-8")
         with self.assertRaisesRegex(ValueError, "Unmapped third-party imports"):
             requirements_for_bundle(self.bundle)
 
@@ -195,7 +196,7 @@ class RequirementTests(unittest.TestCase):
     def test_installed_versions_are_pinned(self) -> None:
         from sync_requirements import requirements_for_bundle
 
-        (self.bundle / "analysis.py").write_text("import json\nimport pandas\n", encoding="utf-8")
+        (self.bundle / "code" / "analysis.py").write_text("import json\nimport pandas\n", encoding="utf-8")
         requirements = requirements_for_bundle(self.bundle)
         self.assertEqual(len(requirements), 1)
         self.assertRegex(requirements[0], r"^pandas==\d")
@@ -204,8 +205,9 @@ class RequirementTests(unittest.TestCase):
     def test_resolved_optional_dependencies_are_included(self) -> None:
         from sync_requirements import requirements_for_bundle
 
-        (self.bundle / "analysis.py").write_text("import pandas\n", encoding="utf-8")
-        (self.bundle / "analysis-report.json").write_text(
+        (self.bundle / "code" / "analysis.py").write_text("import pandas\n", encoding="utf-8")
+        (self.bundle / "metadata").mkdir()
+        (self.bundle / "metadata" / "analysis-report.json").write_text(
             json.dumps({"dependencies": ["pandas", "contextily", "rasterio", "pyproj"]}),
             encoding="utf-8",
         )
