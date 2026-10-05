@@ -127,6 +127,7 @@ $piArgs = @(
   "--no-skills",
   "--no-prompt-templates",
   "--no-context-files",
+  "--tui-mode", "regular",
   "--session-dir", (Join-Path $Root "sessions"),
   "--system-prompt", (Get-Content -LiteralPath (Join-Path $Root "prompts/SYSTEM.md") -Raw),
   "--skill", (Join-Path $Root "skills"),

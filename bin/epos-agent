@@ -96,6 +96,7 @@ declare -a args=(
   --no-skills
   --no-prompt-templates
   --no-context-files
+  --tui-mode regular
   --session-dir "$ROOT/sessions"
   --system-prompt "$(cat "$ROOT/prompts/SYSTEM.md")"
   --skill "$ROOT/skills"
