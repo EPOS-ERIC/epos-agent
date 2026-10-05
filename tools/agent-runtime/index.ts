@@ -1,10 +1,11 @@
 import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { access, appendFile, cp, copyFile, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { access, appendFile, cp, copyFile, mkdir, open, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
 import { createInterface, type Interface } from "node:readline";
+import { createHash } from "node:crypto";
 
 const ROOT = process.env.EPOS_AGENT_ROOT || join(process.env.HOME || process.env.USERPROFILE || "", "epos-agent");
 const VENV_EXECUTABLE_DIRECTORY = process.platform === "win32" ? "Scripts" : "bin";
@@ -40,6 +41,8 @@ type StudyService = {
   role: string;
   format?: string;
   estimatedBytes?: number;
+  request?: { tool: string; arguments: Record<string, any> };
+  resolvedPlan?: Record<string, unknown>;
 };
 type StudyState = {
   id: string;
@@ -55,6 +58,10 @@ type StudyState = {
   downloadedBytes: number;
   createdAt: string;
   visualizationVersion?: 2;
+  approval?: { digest: string; timestamp: string; sessionId: string };
+  downloads?: Record<string, any>[];
+  analysisDigest?: string;
+  notebookDigest?: string;
 };
 type ConversationState = {
   version: 2;
@@ -74,6 +81,37 @@ function emptyConversationState(): ConversationState {
 }
 
 let runtimeConversationState = emptyConversationState();
+const preparedPlans = new Map<string, Record<string, any>>();
+const metadataCache = new Map<string, { timestamp: number; result: any }>();
+
+function canonical(value: any): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).filter(key => value[key] !== undefined).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
+function planDigest(study: StudyState) {
+  return createHash("sha256").update(canonical(study.services)).digest("hex");
+}
+
+function currentDownloads(study: StudyState) {
+  return study.services.map(service => study.downloads?.slice().reverse().find(item => item.requestDigest === canonical(service.request)));
+}
+
+function requestArguments(tool: string, args: any) {
+  if (tool === "epos_execute") return { plan_id: args.plan_id };
+  if (tool === "epos_fetch") return { url: args.url };
+  return { toolName: args.toolName, arguments: normalizeFdsnArguments(args.toolName, args.arguments) };
+}
+
+function requireAcquisition(tool: string, args: any) {
+  requireConfirmedStudy();
+  const study = runtimeConversationState.study!;
+  const request = { tool, arguments: requestArguments(tool, args) };
+  const service = study.services.find(service => canonical(service.request) === canonical(request));
+  if (!service) throw new Error("This request is not in the approved plan. Prepare and approve the updated plan first.");
+  return service;
+}
 
 function withoutEmptyValues(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -98,7 +136,7 @@ function modelConversationState(state: ConversationState) {
     filters: state.filters,
     selectedResourceId: state.selectedResourceId,
     format: state.format,
-    files: state.files,
+    files: state.files.slice(-5),
     study: study ? {
       id: study.id,
       title: study.title,
@@ -106,7 +144,8 @@ function modelConversationState(state: ConversationState) {
       context: study.context,
       scientificQuestion: study.scientificQuestion,
       phase: study.phase,
-      services: study.services,
+      services: study.services.map(({ resourceId, title, role }) => ({ resourceId, title, role })),
+      downloadSummary: currentDownloads(study).filter(Boolean).map(item => ({ title: item!.title, outcome: item!.outcome })),
       confirmed: study.confirmed,
       budgetBytes: study.budgetBytes,
       downloadedBytes: study.downloadedBytes,
@@ -167,7 +206,10 @@ function storedConversationState(data: unknown): ConversationState | undefined {
         scientificQuestion: String(study.scientificQuestion || "").slice(0, 4000),
         phase: ["context", "question", "services", "download", "visualization", "code", "complete"].includes(study.phase) ? study.phase : "context",
         services: Array.isArray(study.services) ? study.services.slice(0, 100) : [],
-        confirmed: Boolean(study.confirmed),
+        confirmed: false,
+        downloads: Array.isArray(study.downloads) ? study.downloads : [],
+        analysisDigest: study.analysisDigest,
+        notebookDigest: study.notebookDigest,
         budgetBytes: MAX_DOWNLOAD_BYTES,
         downloadedBytes: Math.max(0, Number(study.downloadedBytes) || 0),
         createdAt: typeof study.createdAt === "string" ? study.createdAt : now(),
@@ -189,7 +231,7 @@ function remainingStudyBudget() {
 
 function requireConfirmedStudy() {
   const study = runtimeConversationState.study;
-  if (study && !study.confirmed) throw new Error("The study download plan requires the researcher's single confirmation before downloading.");
+  if (!study || !study.confirmed || study.approval?.digest !== planDigest(study)) throw new Error("Prepare a study and obtain approval in the user interface before downloading.");
 }
 
 function restoreConversationState(ctx: ExtensionContext) {
@@ -223,11 +265,12 @@ const FDSN_FILTER_KEYS = ["starttime", "endtime", "updatedafter", "minmag", "max
 function nextConversationState(current: ConversationState, event: any): ConversationState | undefined {
   const input = (event.input || {}) as Record<string, any>;
   const payload = toolPayload(event);
+  if (payload.acquisitionRecorded) return current;
   const provenanceRecord = payload?.provenance?.provenanceRecord;
   const withArtifacts = (state: ConversationState, ...files: unknown[]) => ({
     ...state,
     files: recentPaths(state.files, ...files),
-    provenanceRecords: provenanceRecord ? [...state.provenanceRecords, provenanceRecord].slice(-MAX_STATE_FILES) : state.provenanceRecords,
+    provenanceRecords: state.provenanceRecords,
     updatedAt: now(),
   });
 
@@ -247,7 +290,7 @@ function nextConversationState(current: ConversationState, event: any): Conversa
   }
 
   if (event.toolName === "epos_manage_study") {
-    return storedConversationState(payload.state);
+    return runtimeConversationState;
   }
 
   if (event.toolName === "epos_load_tools") {
@@ -362,8 +405,8 @@ function nextConversationState(current: ConversationState, event: any): Conversa
     return withArtifacts({
       ...current,
       intent: "analyze_data",
-      study: current.study ? { ...current.study, phase: input.outputImagePath || payload.outputs?.length ? "visualization" : "code" } : undefined,
-    }, payload.script, payload.reportPath, payload.outputLog, input.outputImagePath, ...(Array.isArray(payload.outputs) ? payload.outputs : []));
+      study: current.study ? { ...current.study, phase: payload.notebookPath ? "complete" : input.outputImagePath || payload.outputs?.length ? "visualization" : "code" } : undefined,
+    }, payload.script, payload.reportPath, payload.outputLog, payload.notebookPath, input.outputImagePath, ...(Array.isArray(payload.outputs) ? payload.outputs : []));
   }
   if (event.toolName === "epos_prepare_visualization") {
     return withArtifacts({
@@ -446,6 +489,10 @@ class StdioMcpClient {
 const mcp = new StdioMcpClient(FDSN_CMD, [], join(ROOT, "services", "mcp-fdsnws-event"));
 const eposMcp = new StdioMcpClient(EPOS_MCP_PYTHON, [EPOS_MCP_SERVER], join(ROOT, "services", "mcp-epos"), { EPOS_MCP_LOCAL_PATHS: "1" });
 async function eposMcpCall(toolName: string, args: Record<string, unknown>) {
+  const cacheable = ["epos_search", "epos_search_page", "epos_details", "epos_organizations", "epos_search_filter"].includes(toolName);
+  const cacheKey = canonical({ toolName, args });
+  const cached = metadataCache.get(cacheKey);
+  if (cacheable && cached && Date.now() - cached.timestamp < 5 * 60 * 1000) return cached.result;
   await eposMcp.start();
   const response = await eposMcp.request("tools/call", { name: toolName, arguments: args });
   if (response?.isError) {
@@ -455,7 +502,14 @@ async function eposMcpCall(toolName: string, args: Record<string, unknown>) {
     catch { }
     throw error;
   }
-  if (response?.structuredContent) return response.structuredContent;
+  if (response?.structuredContent) {
+    if (response.structuredContent.error) throw new Error(JSON.stringify(response.structuredContent));
+    if (cacheable) {
+      if (metadataCache.size >= 100) metadataCache.delete(metadataCache.keys().next().value!);
+      metadataCache.set(cacheKey, { timestamp: Date.now(), result: response.structuredContent });
+    }
+    return response.structuredContent;
+  }
   const text = response?.content?.find((c: any) => c.type === "text")?.text;
   if (!text) throw new Error(`EPOS MCP returned no text for ${toolName}`);
   return JSON.parse(text);
@@ -482,6 +536,7 @@ async function logProvenance(record: Record<string, unknown>) {
   await mkdir(PROV_DIR, { recursive: true });
   const file = join(PROV_DIR, `${new Date().toISOString().replace(/[:.]/g, "-")}-${record.action || "epos"}.json`);
   await writeFile(file, JSON.stringify(record, null, 2));
+  runtimeConversationState.provenanceRecords.push(record);
   return record;
 }
 function modelResult(payload: unknown, modelPayload: unknown = payload) {
@@ -495,8 +550,7 @@ async function resultWithProvenance(action: string, parameters: Record<string, u
   const record = { action, timestamp: source.retrievedAt || now(), parameters, ...source };
   const provenanceRecord = await logProvenance(record);
   const result = { ...payload, provenance: { ...record, provenanceRecord } };
-  const modelProvenance = withoutEmptyValues({ ...record, parameters: undefined });
-  const modelPayload = withoutEmptyValues({ ...payload, provenance: { ...(modelProvenance as object), provenanceRecord } }) || {};
+  const modelPayload = withoutEmptyValues({ ...payload, preview: undefined, provenance: undefined, artifact_path: undefined, resolved_plan: undefined }) || {};
   return modelResult(result, modelPayload);
 }
 function parseMcpPayload(result: any) {
@@ -566,7 +620,7 @@ async function ensureAnalysisEnvironment(optionalDependencies: string[] = []) {
     await mkdir(VISUALIZATION_ROOT, { recursive: true });
     await execFileAsync(SYSTEM_PYTHON, [...SYSTEM_PYTHON_ARGUMENTS, "-m", "venv", ANALYSIS_ENV], { timeout: 120000 });
   }
-  const modules = ["numpy", "pandas", "matplotlib", "folium", "xyzservices", ...optionalDependencies];
+  const modules = ["numpy", "pandas", "matplotlib", "folium", "xyzservices", "nbclient", "ipykernel", ...optionalDependencies];
   try {
     await execFileAsync(ANALYSIS_PYTHON, ["-c", `import ${modules.join(", ")}`], { timeout: 30000 });
   } catch {
@@ -609,17 +663,89 @@ async function writeStudyDocuments(state: ConversationState) {
       budgetBytes: study.budgetBytes,
       downloadedBytes: study.downloadedBytes,
       remainingBytes: Math.max(0, study.budgetBytes - study.downloadedBytes),
+      approval: study.approval,
+      outcomes: study.downloads || [],
     },
     artifacts: state.files,
   };
   await writeFile(join(study.bundlePath, "metadata", "manifest.json"), JSON.stringify(manifest, null, 2));
-  await writeFile(join(study.bundlePath, "metadata", "parameters.json"), JSON.stringify({ filters: state.filters, format: state.format }, null, 2));
+  await writeFile(join(study.bundlePath, "metadata", "parameters.json"), JSON.stringify({ services: study.services, filters: state.filters, format: state.format }, null, 2));
   await writeFile(join(study.bundlePath, "metadata", "provenance.json"), JSON.stringify({ records: state.provenanceRecords }, null, 2));
   const reproduce = study.visualizationVersion === 2
-    ? "Run `analysis.py` through EPOS Agent. A notebook is generated only after the analysis succeeds."
+    ? "Install notebooks/requirements.txt, then run `python code/analysis.py` from this directory or open the notebook in notebooks/."
     : `Run \`python3 analysis.py\` from this directory or open \`${study.slug}.ipynb\`.`;
-  await writeFile(join(study.bundlePath, "README.md"), `# ${study.title}\n\n${study.context || "No context recorded."}\n\n## Scientific question\n\n${study.scientificQuestion || "Not yet defined."}\n\n## Reproduce\n\n${reproduce}\n\n## Completeness\n\nConsult \`manifest.json\` and \`provenance.json\` before scientific interpretation. Transport completeness does not by itself prove catalogue completeness.\n`);
+  await writeFile(join(study.bundlePath, "README.md"), `# ${study.title}\n\n${study.context || "No context recorded."}\n\n## Scientific question\n\n${study.scientificQuestion || "Not yet defined."}\n\n## Reproduce\n\n${reproduce}\n\n## Completeness\n\nConsult \`metadata/manifest.json\`, \`metadata/service-download-report.json\` and \`metadata/provenance.json\` before scientific interpretation. The final file inventory is in \`metadata/inventory.json\`. Transport completeness does not by itself prove catalogue completeness.\n`);
   if (study.visualizationVersion === 2) await ensureVisualizationTemplate(study.bundlePath);
+  await writeFile(join(metadataDirectory, "service-download-report.json"), JSON.stringify(study.downloads || [], null, 2));
+}
+
+async function analysisFingerprint(bundle: string) {
+  const hash = createHash("sha256");
+  async function walk(directory: string) {
+    for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name === "__pycache__") continue;
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) await walk(path);
+      else if (entry.isFile()) {
+        hash.update(relative(bundle, path));
+        const file = await open(path, "r");
+        try { for await (const chunk of file.createReadStream({ autoClose: false })) hash.update(chunk); }
+        finally { await file.close(); }
+      }
+    }
+  }
+  await walk(join(bundle, "code"));
+  await walk(join(bundle, "data"));
+  return hash.digest("hex");
+}
+
+function requireDownloads() {
+  const study = runtimeConversationState.study;
+  if (!study || !study.services.length || currentDownloads(study).some(item => !item)) {
+    throw new Error("Execute the prepared download plan before inspecting or visualizing data.");
+  }
+  if (!currentDownloads(study).some(item => item?.outcome === "downloaded")) throw new Error("No usable data were downloaded. Review the download summary before selecting another source.");
+  return study;
+}
+
+async function acquire(tool: string, args: any, execute: () => Promise<any>, retryFailed = false) {
+  const service = requireAcquisition(tool, args);
+  const study = runtimeConversationState.study!;
+  const key = canonical(service.request);
+  const existing = study.downloads?.slice().reverse().find(item => item.requestDigest === key);
+  if (existing && !(retryFailed && ["failed", "unavailable", "partial"].includes(existing.outcome))) return modelResult({ acquisitionRecorded: true, ...existing }, { title: existing.title, outcome: existing.outcome, outputFile: existing.outputFile, cached: true });
+  let payload: any;
+  let failure: string | undefined;
+  try {
+    const result = await execute();
+    payload = toolPayload(result);
+    if (result.isError || payload.error) failure = String(payload.error || payload.message || "Acquisition failed");
+  } catch (error) {
+    failure = error instanceof Error ? error.message : String(error);
+    try { payload = JSON.parse(failure!); } catch { payload = {}; }
+  }
+  const outcome = failure ? (payload.outputFile ? "partial" : /401|403/.test(failure) ? "access_denied" : /503/.test(failure) ? "unavailable" : "failed")
+    : payload.no_data || payload.recordCount === 0 ? "no_data"
+    : payload.paginationDetected || payload.complete === false ? "partial"
+    : payload.scientificCompleteness === "not_applicable_metadata" ? "metadata" : "downloaded";
+  if (outcome === "partial" && payload.outputFile && !payload.outputFile.includes(".partial.")) {
+    const partialPath = payload.outputFile.slice(0, -extname(payload.outputFile).length) + ".partial" + extname(payload.outputFile);
+    await rename(payload.outputFile, partialPath);
+    payload.outputFile = partialPath;
+  }
+  const record = { title: service.title, resourceId: service.resourceId, requestDigest: key, request: service.request, resolvedPlan: service.resolvedPlan,
+    timestamp: now(), outcome, outputFile: payload.outputFile, bytes: payload.bytes || 0, recordCount: payload.recordCount,
+    scientificCompleteness: payload.scientificCompleteness || payload.datasetCompleteness, coverage: payload.coverage,
+    paginationEvidence: payload.paginationEvidence, error: failure, approval: study.approval };
+  study.downloads = [...(study.downloads || []), record];
+  study.downloadedBytes += record.bytes;
+  study.phase = "download";
+  study.analysisDigest = undefined;
+  study.notebookDigest = undefined;
+  runtimeConversationState.files = recentPaths(runtimeConversationState.files, record.outputFile);
+  await logProvenance({ action: "acquisition", ...record });
+  await writeStudyDocuments(runtimeConversationState);
+  return modelResult({ acquisitionRecorded: true, ...record }, { title: record.title, outcome, outputFile: record.outputFile, bytes: record.bytes, recordCount: record.recordCount, error: failure, scientificCompleteness: record.scientificCompleteness });
 }
 
 function jsonlRow(columns: unknown, row: unknown) {
@@ -661,22 +787,27 @@ function createWorkflowTool() {
     role: Type.String({ description: "Short scientific role shared in the grouped service summary" }),
     format: Type.Optional(Type.String()),
     estimatedBytes: Type.Optional(Type.Integer({ minimum: 0 })),
+    request: Type.Object({
+      tool: StringEnum(["epos_execute", "epos_fetch", "epos_fdsnws_event_call"] as const),
+      arguments: Type.Record(Type.String(), Type.Any(), { description: "Exact tool arguments; EPOS execution uses a prepared plan_id" }),
+    }),
   });
   return defineTool({
     name: "epos_manage_study",
     label: "EPOS Manage Study",
-    description: "Create and advance the general study workflow. Use start, prepare, confirm, complete or status; never expose internal service IDs in the chat summary.",
+    description: "Start a study, prepare exact acquisition requests, then download: one user-interface approval executes all planned sources without model calls between downloads. Status returns a compact summary. Complete requires a verified notebook.",
     parameters: Type.Object({
-      action: StringEnum(["start", "prepare", "confirm", "complete", "status"] as const),
+      action: StringEnum(["start", "prepare", "download", "complete", "status"] as const),
       title: Type.Optional(Type.String()),
       context: Type.Optional(Type.String()),
       scientificQuestion: Type.Optional(Type.String()),
       filters: Type.Optional(Type.Record(Type.String(), Type.Union([Type.String(), Type.Number(), Type.Boolean()]))),
       services: Type.Optional(Type.Array(serviceShape)),
+      retryFailed: Type.Optional(Type.Boolean({ description: "Explicitly retry failed, unavailable or partial sources once; requires a fresh user-interface approval and preserves previous attempts" })),
     }),
-    async execute(_id, params: any) {
+    async execute(_id, params: any, signal, _onUpdate, ctx) {
       const action = params.action;
-      if (action === "status") return modelResult({ state: runtimeConversationState, workspace: WORKSPACE });
+      if (action === "status") return modelResult({ state: runtimeConversationState }, modelConversationState(runtimeConversationState));
 
       if (action === "start") {
         if (!params.title || typeof params.title !== "string") throw new Error("A study title is required.");
@@ -713,7 +844,26 @@ function createWorkflowTool() {
         const study = runtimeConversationState.study;
         if (!study) throw new Error("Start a study before advancing its workflow.");
         if (action === "prepare") {
-          const services = Array.isArray(params.services) ? params.services.slice(0, 100) : [];
+          const services = Array.isArray(params.services) ? params.services : [];
+          if (!services.length) throw new Error("Select at least one acquisition request.");
+          if (services.length > 100) throw new Error("Split this plan into batches of at most 100 sources; no sources have been silently omitted.");
+          for (const service of services) {
+            if (!service.request) throw new Error("Each service requires its exact acquisition request.");
+            if (!["epos_execute", "epos_fetch", "epos_fdsnws_event_call"].includes(service.request.tool)) throw new Error("Unsupported acquisition tool.");
+            service.request.arguments = requestArguments(service.request.tool, service.request.arguments);
+            if (service.request.tool === "epos_fdsnws_event_call") {
+              const request = service.request.arguments;
+              if (!["fdsn_query_earthquakes", "fdsn_get_earthquake_by_id", "fdsn_get_arrivals_by_id", "fdsn_get_allmagnitudes_by_id", "fdsn_get_allorigins_by_id", "fdsn_get_focalmechanism_by_id"].includes(request.toolName)) throw new Error("Unsupported FDSN operation.");
+              if (!request.arguments.datacenter) throw new Error("Choose a datacenter before preparing the FDSN plan.");
+              if (request.toolName === "fdsn_query_earthquakes" && (!request.arguments.starttime || !request.arguments.endtime)) throw new Error("Specify both dates before preparing the FDSN plan.");
+              if (request.toolName !== "fdsn_query_earthquakes" && !request.arguments.eventid) throw new Error("An observed event ID is required for an FDSN detail request.");
+            }
+            if (service.request.tool === "epos_execute") {
+              const plan = preparedPlans.get(service.request.arguments.plan_id);
+              if (!plan || plan.distribution_id !== service.resourceId) throw new Error("Prepare this distribution in the current session before adding it to the study.");
+              service.resolvedPlan = plan;
+            }
+          }
           const knownTotal = services.reduce((sum: number, service: StudyService) => sum + (Number(service.estimatedBytes) || 0), 0);
           if (knownTotal + study.downloadedBytes > study.budgetBytes) throw new Error("The known download plan exceeds the remaining 1 GiB study budget; narrow the study before confirmation.");
           runtimeConversationState = {
@@ -725,18 +875,50 @@ function createWorkflowTool() {
               scientificQuestion: params.scientificQuestion === undefined ? study.scientificQuestion : String(params.scientificQuestion).slice(0, 4000),
               services,
               confirmed: false,
+              approval: undefined,
+              analysisDigest: undefined,
+              notebookDigest: undefined,
               phase: "services",
             },
             updatedAt: now(),
           };
-        } else if (action === "confirm") {
+        } else if (action === "download") {
           if (!study.services.length) throw new Error("Prepare at least one service before confirming the download plan.");
-          runtimeConversationState = { ...runtimeConversationState, study: { ...study, confirmed: true, phase: "download" }, updatedAt: now() };
+          const digest = planDigest(study);
+          if (!study.confirmed || study.approval?.digest !== digest || params.retryFailed) {
+            if (!ctx.hasUI) throw new Error("Acquisition approval requires an interactive user interface.");
+            const approved = await ctx.ui.confirm("Conferma download", "Sono pronto a scaricare i dati. Confermi di procedere?");
+            await logProvenance({ action: "approval", approved, digest, timestamp: now(), sessionId: ctx.sessionManager.getSessionId() });
+            if (!approved) return modelResult({ approved: false, message: "Download declined; no acquisition started." });
+            if (digest !== planDigest(study) || runtimeConversationState.study !== study) throw new Error("The plan changed during approval. Review it again.");
+            study.approval = { digest, timestamp: now(), sessionId: ctx.sessionManager.getSessionId() };
+            study.confirmed = true;
+          }
+          for (const service of study.services) {
+            if (signal?.aborted) break;
+            ctx.ui.notify(`Downloading: ${service.title}`, "info");
+            const request = service.request!;
+            await acquire(request.tool, request.arguments, () => request.tool === "epos_fdsnws_event_call"
+              ? fdsnMcpTool.execute(_id, request.arguments, signal, _onUpdate, ctx)
+              : executeEposProxy(request.tool, request.arguments), params.retryFailed === true);
+          }
+          await writeStudyDocuments(runtimeConversationState);
+          const outcomes = currentDownloads(study);
+          return modelResult({ acquisitionRecorded: true,
+            downloadSummary: study.services.map((service, index) => ({ title: service.title, outcome: outcomes[index]?.outcome || "pending", outputFile: outcomes[index]?.outputFile, error: outcomes[index]?.error?.slice(0, 600) })),
+            next: outcomes.some(item => !item) ? "Download interrupted; resume the approved batch to finish pending sources."
+              : outcomes.some(item => item?.outcome === "downloaded") ? "Load analysis and call epos_suggest_visualizations on the downloaded files."
+              : "No usable data were acquired. Report the outcomes and ask before retrying or selecting alternative sources." });
         } else if (action === "complete") {
+          if (!study.notebookDigest || study.notebookDigest !== await analysisFingerprint(study.bundlePath)) throw new Error("Execute the current analysis and finalize its notebook before completing the study.");
           runtimeConversationState = { ...runtimeConversationState, study: { ...study, phase: "complete" }, updatedAt: now() };
         }
       }
       await writeStudyDocuments(runtimeConversationState);
+      if (action === "start" || action === "prepare") {
+        await writeFile(join(runtimeConversationState.study!.bundlePath, "metadata", "discovery.json"), JSON.stringify(
+          [...metadataCache.entries()].map(([request, value]) => ({ request: JSON.parse(request), retrievedAt: new Date(value.timestamp).toISOString(), result: value.result })), null, 2));
+      }
       const result = { state: runtimeConversationState, workspace: runtimeConversationState.study?.bundlePath };
       const study = runtimeConversationState.study;
       return modelResult(result, {
@@ -923,11 +1105,14 @@ const executeTool = defineTool({
 });
 
 async function executeEposProxy(toolName: string, args: any, metadataOnly: boolean = false) {
-  if (toolName === "epos_execute" || (toolName === "epos_fetch" && !metadataOnly)) requireConfirmedStudy();
-  const result = await eposMcpCall(toolName, args);
-  if (toolName === "epos_execute" && typeof result?.artifact_path === "string") {
-    const source = resolve(result.artifact_path);
-    if (source !== EPOS_MCP_ARTIFACTS && !source.startsWith(EPOS_MCP_ARTIFACTS + sep)) {
+  if (toolName === "epos_execute" || toolName === "epos_fetch") requireAcquisition(toolName, args);
+  const forwarded = toolName === "epos_fetch" ? { url: args.url } : toolName === "epos_execute" ? { plan_id: args.plan_id, confirm: true } : args;
+  const result = await eposMcpCall(toolName, forwarded);
+  if (toolName === "epos_prepare_execute" && result.plan_id) preparedPlans.set(result.plan_id, { distribution_id: args.distribution_id, ...result.resolved_plan });
+  if (["epos_execute", "epos_fetch"].includes(toolName) && typeof result?.artifact_path === "string") {
+    const source = await realpath(result.artifact_path);
+    const artifactDirectory = await realpath(EPOS_MCP_ARTIFACTS);
+    if (!source.startsWith(artifactDirectory + sep)) {
       throw new Error("EPOS MCP returned an artifact outside its local artifact directory.");
     }
     const info = await stat(source);
@@ -945,7 +1130,7 @@ async function executeEposProxy(toolName: string, args: any, metadataOnly: boole
 const nativeEposSearchTool = defineTool({
   name: "epos_search",
   label: "EPOS Search",
-  description: "Search one page of EPOS distributions. Inspect every subsequent page returned by next_offset before concluding that a service is unavailable or choosing candidates. For a confirmed alternative search after a partial study, pass the attempted distribution IDs through exclude_distribution_ids.",
+  description: "Search EPOS and traverse all cached result pages internally. Return up to 30 compact candidates and save the full catalogue locally; use filters or pages for additional candidates. Repeated queries reuse a five-minute session cache.",
   parameters: Type.Object({
     q: Type.Optional(Type.String({ description: "Free-text query" })),
     keywords: Type.Optional(Type.String({ description: "Comma-separated keywords" })),
@@ -960,7 +1145,27 @@ const nativeEposSearchTool = defineTool({
     exclude_distribution_ids: Type.Optional(Type.String({ description: "Comma-separated distribution IDs to omit from this search" })),
     limit: Type.Optional(Type.Integer({ description: "Number of results per page" }))
   }),
-  async execute(_id: string, args: any) { return executeEposProxy("epos_search", args); }
+  async execute(_id: string, args: any) {
+    const first = await eposMcpCall("epos_search", { ...args, limit: 50 });
+    const candidates = [...(first.candidates || [])];
+    let offset = first.next_offset;
+    const visited = new Set<number>();
+    while (offset !== null && offset !== undefined) {
+      if (visited.has(offset)) throw new Error("Catalogue pagination did not advance; discovery is incomplete.");
+      visited.add(offset);
+      const page = await eposMcpCall("epos_search_page", { search_id: first.search_id, offset, limit: 50 });
+      candidates.push(...(page.candidates || []));
+      offset = page.next_offset;
+    }
+    const unique = [...new Map(candidates.map(item => [item.distribution_id, item])).values()];
+    const outputDirectory = runtimeConversationState.study ? join(runtimeConversationState.study.bundlePath, "metadata") : join(ROOT, "cache");
+    await mkdir(outputDirectory, { recursive: true });
+    const cataloguePath = join(outputDirectory, `catalogue-${first.search_id}.json`);
+    await writeFile(cataloguePath, JSON.stringify({ query: args, candidates: unique }, null, 2));
+    return resultWithProvenance("catalogue-search", args, { search_id: first.search_id, total: unique.length, discoveryComplete: true, cataloguePath,
+      candidates: unique.slice(0, 30).map(({ index, distribution_id, title, provider, formats }: any) => ({ index, distribution_id, title, provider, formats })),
+      moreCandidates: unique.length > 30, next_offset: unique.length > 30 ? 30 : null });
+  }
 });
 
 const nativeEposSearchPageTool = defineTool({
@@ -986,7 +1191,7 @@ const nativeEposSearchFilterTool = defineTool({
   label: "EPOS Search Filter",
   description: "Filter search results.",
   parameters: Type.Object({
-    search_id: Type.String(), index: Type.Integer()
+    search_id: Type.String(), text: Type.Optional(Type.String()), provider: Type.Optional(Type.String()), format: Type.Optional(Type.String()), status: Type.Optional(Type.String()), executable_only: Type.Optional(Type.Boolean()), offset: Type.Optional(Type.Integer()), limit: Type.Optional(Type.Integer())
   }),
   async execute(_id: string, args: any) { return executeEposProxy("epos_search_filter", args); }
 });
@@ -1023,7 +1228,7 @@ const nativeEposExecuteTool = defineTool({
   name: "epos_execute",
   label: "EPOS Execute",
   description: "Execute an EPOS service.",
-  parameters: Type.Object({ plan_id: Type.String(), confirm: Type.Optional(Type.Boolean()), params: Type.Optional(Type.Any()) }),
+  parameters: Type.Object({ plan_id: Type.String() }),
   async execute(_id: string, args: any) { return executeEposProxy("epos_execute", args); }
 });
 
@@ -1031,7 +1236,7 @@ const nativeEposInspectTool = defineTool({
   name: "epos_inspect",
   label: "EPOS Inspect",
   description: "Inspect EPOS service results.",
-  parameters: Type.Object({ execution_id: Type.String() }),
+  parameters: Type.Object({ artifact_id: Type.String() }),
   async execute(_id: string, args: any) { return executeEposProxy("epos_inspect", args); }
 });
 
@@ -1039,7 +1244,7 @@ const nativeEposVisualizeTool = defineTool({
   name: "epos_visualize",
   label: "EPOS Visualize",
   description: "Visualize EPOS service results.",
-  parameters: Type.Object({ execution_id: Type.String() }),
+  parameters: Type.Object({ artifact_id: Type.String() }),
   async execute(_id: string, args: any) { return executeEposProxy("epos_visualize", args); }
 });
 
@@ -1047,8 +1252,8 @@ const nativeEposFetchTool = defineTool({
   name: "epos_fetch",
   label: "EPOS Fetch",
   description: "Fetch EPOS service results.",
-  parameters: Type.Object({ url: Type.String(), metadataOnly: Type.Optional(Type.Boolean()) }),
-  async execute(_id: string, args: any) { return executeEposProxy("epos_fetch", args, args.metadataOnly); }
+  parameters: Type.Object({ url: Type.String() }),
+  async execute(_id: string, args: any) { return executeEposProxy("epos_fetch", args); }
 });
 
 const visualizationDatasetShape = Type.Object({
@@ -1088,26 +1293,32 @@ const prepareVisualizationTool = defineTool({
     wms: Type.Optional(Type.Array(visualizationWmsShape)),
   }),
   async execute(_id, params: any) {
-    const study = runtimeConversationState.study;
-    if (!study) throw new Error("Start a study before preparing a visualization.");
+    const study = requireDownloads();
+    await access(join(study.bundlePath, "metadata", "inspection.json"));
     if (study.visualizationVersion !== 2) throw new Error("Visualization v2 applies only to newly created studies; recreate earlier test studies.");
-    if (!["download", "code", "visualization"].includes(study.phase)) {
+    if (!["download", "code", "visualization", "complete"].includes(study.phase)) {
       throw new Error("Download study data before preparing a visualization.");
     }
     await ensureVisualizationTemplate(study.bundlePath);
-    const datasets = Array.isArray(params.datasets) ? params.datasets.map((item: any) => {
+    const inspection = JSON.parse(await readFile(join(study.bundlePath, "metadata", "inspection.json"), "utf8"));
+    const selectedDatasets = Array.isArray(params.datasets) && params.datasets.length ? params.datasets : inspection.datasets.map((item: any) => ({ path: item.path }));
+    const datasets = selectedDatasets.map((item: any) => {
       const path = resolveWorkspacePath(item.path, study.bundlePath);
       if (path !== study.bundlePath && !path.startsWith(study.bundlePath + sep)) {
         throw new Error(`Visualization dataset must be inside ${study.bundlePath}`);
       }
+      if (path.includes(".partial.")) throw new Error("Partial downloads cannot be silently included in the standard visualization.");
       return { ...item, path: relative(study.bundlePath, path) };
-    }) : [];
+    });
+    if (!datasets.length) throw new Error("Inspection found no supported datasets. Select a supported source or provide an explicit custom analysis.");
     const basemap = ["street", "satellite", "none"].includes(params.basemap) ? params.basemap : "satellite";
     const topography = params.topography === true;
     const interactive = params.interactive === true;
     const extent = Array.isArray(params.extent) && params.extent.length === 4 ? params.extent : undefined;
     const config = { version: 2, recipe: params.recipe, datasets, map: { basemap, topography, ...(extent ? { extent } : {}) }, interactive, wms: Array.isArray(params.wms) ? params.wms : [] };
     const configPath = join(study.bundlePath, "code", "visualization.json");
+    study.analysisDigest = undefined;
+    study.notebookDigest = undefined;
     await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
     const detectedFiles = await visualizationDataFiles(join(study.bundlePath, "data"));
     const configuredFiles = datasets.map((item: any) => join(study.bundlePath, item.path));
@@ -1144,6 +1355,19 @@ const prepareVisualizationTool = defineTool({
   },
 });
 
+const suggestVisualizationsTool = defineTool({
+  name: "epos_suggest_visualizations",
+  label: "Inspect downloaded data",
+  description: "Inspect saved files locally and return compact, compatible visualization suggestions. Call after the download plan, before preparing visualization. Full statistics stay in metadata/inspection.json.",
+  parameters: Type.Object({}),
+  async execute() {
+    const study = requireDownloads();
+    const python = await ensureAnalysisEnvironment();
+    const { stdout } = await execFileAsync(python, [join(VISUALIZATION_ROOT, "workflow.py"), "inspect", study.bundlePath], { timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
+    return modelResult(JSON.parse(stdout));
+  },
+});
+
 const finalizeNotebookTool = defineTool({
   name: "epos_finalize_notebook",
   label: "EPOS Finalize Notebook",
@@ -1153,6 +1377,9 @@ const finalizeNotebookTool = defineTool({
     const study = runtimeConversationState.study;
     if (!study) throw new Error("Start a study before finalizing a notebook.");
     if (study.visualizationVersion !== 2) throw new Error("Notebook finalization applies only to visualization v2 studies.");
+    const fingerprint = await analysisFingerprint(study.bundlePath);
+    if (study.analysisDigest !== fingerprint) throw new Error("Run the current code/analysis.py successfully before finalizing the notebook.");
+    study.notebookDigest = undefined;
     const reportPath = join(study.bundlePath, "metadata", "analysis-report.json");
     try { await access(reportPath); }
     catch { throw new Error("Run analysis.py successfully before finalizing the notebook."); }
@@ -1166,17 +1393,23 @@ const finalizeNotebookTool = defineTool({
     const notebookPath = join(study.bundlePath, "notebooks", `${study.slug}.ipynb`);
     const notebook = {
       cells: [
-        { id: "install-dependencies", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["%pip install -r requirements.txt\n"] },
+        { id: "install-dependencies", cell_type: "markdown", metadata: {}, source: ["Install dependencies once in your Python environment: `python -m pip install -r requirements.txt`. Then execute the cells below.\n"] },
         { id: "study-context", cell_type: "markdown", metadata: {}, source: [`# ${study.title}\n`, `${study.scientificQuestion || "Scientific question not yet defined."}\n`] },
-        { id: "run-analysis", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["import sys\n", "sys.path.append('../code')\n", "from analysis import main\n", "report = main()\n", "report\n"] },
+        { id: "run-analysis", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: ["import sys\n", "sys.path.insert(0, '../code')\n", "from analysis import main\n", "report = main()\n", "{'datasets': len(report['datasets']), 'figures': len(report['outputs']), 'warnings': report['warnings']}\n"] },
         {
           id: "display-outputs", cell_type: "code", execution_count: null, metadata: {}, outputs: [], source: [
+            "from os.path import relpath\n",
             "from pathlib import Path\n",
-            "from IPython.display import Image, Markdown, display\n",
+            "from IPython.display import IFrame, Image, Markdown, display\n",
             "for output in report['outputs']:\n",
             "    path = Path(output)\n",
-            "    link = path.relative_to(Path.cwd()) if path.is_relative_to(Path.cwd()) else path\n",
-            "    display(Image(filename=str(path))) if path.suffix.lower() == '.png' else display(Markdown(f'[{path.name}]({link.as_posix()})'))\n",
+            "    link = Path(relpath(path, Path.cwd())).as_posix()\n",
+            "    if path.suffix.lower() == '.png':\n",
+            "        display(Image(filename=str(path)))\n",
+            "    elif path.suffix.lower() == '.html':\n",
+            "        display(IFrame(src=link, width='100%', height=650))\n",
+            "    else:\n",
+            "        display(Markdown(f'[{path.name}]({link})'))\n",
           ]
         },
       ],
@@ -1185,6 +1418,20 @@ const finalizeNotebookTool = defineTool({
       nbformat_minor: 5,
     };
     await writeFile(notebookPath, JSON.stringify(notebook, null, 2) + "\n");
+    try {
+      await execFileAsync(python, [join(VISUALIZATION_ROOT, "workflow.py"), "verify", study.bundlePath, "--notebook", notebookPath], { timeout: 300000, maxBuffer: 4 * 1024 * 1024 });
+    } catch (error) {
+      const details = error as any;
+      const logPath = join(study.bundlePath, "metadata", "notebook-error.json");
+      await writeFile(logPath, JSON.stringify({ stdout: details.stdout, stderr: details.stderr, message: details.message }, null, 2));
+      await logProvenance({ action: "notebook-failed", timestamp: now(), logPath });
+      await writeStudyDocuments(runtimeConversationState);
+      throw new Error(`Notebook verification failed. ${String(details.stderr || details.message).trim().split("\n").slice(-1)[0].slice(0, 400)} Full log: ${logPath}`);
+    }
+    if (fingerprint !== await analysisFingerprint(study.bundlePath)) throw new Error("Analysis inputs changed during notebook verification.");
+    study.notebookDigest = fingerprint;
+    study.phase = "complete";
+    await logProvenance({ action: "notebook-verified", timestamp: now(), fingerprint, notebookPath });
     return modelResult({ notebookPath, requirementsPath, reportPath }, { finalized: true, notebookPath, requirementsPath });
   },
 });
@@ -1200,7 +1447,7 @@ const runPythonTool = defineTool({
     timeoutMs: Type.Optional(Type.Number({ description: "Execution timeout in ms; default 60000, max 300000" })),
     outputImagePath: Type.Optional(Type.String({ description: "Optional PNG/JPEG/GIF/WebP path inside workspace to return inline after execution" })),
   }),
-  async execute(_id, params: any, signal) {
+  async execute(_id, params: any, signal, onUpdate, ctx) {
     const executionDirectory = runtimeConversationState.study?.bundlePath || WORKSPACE;
     await mkdir(executionDirectory, { recursive: true });
     let script: string;
@@ -1216,10 +1463,16 @@ const runPythonTool = defineTool({
     }
     const timeout = Math.max(1000, Math.min(Number(params.timeoutMs || 60000), 300000));
     const args = Array.isArray(params.args) ? params.args : [];
-    const expectedReportPath = !temporaryScript && resolve(script) === join(executionDirectory, "analysis.py")
+    const expectedReportPath = !temporaryScript && resolve(script) === join(executionDirectory, "code", "analysis.py")
       ? join(executionDirectory, "metadata", "analysis-report.json")
       : undefined;
     if (expectedReportPath) await unlink(expectedReportPath).catch(() => { });
+    if (expectedReportPath && runtimeConversationState.study) {
+      requireDownloads();
+      runtimeConversationState.study.analysisDigest = undefined;
+      runtimeConversationState.study.notebookDigest = undefined;
+    }
+    const fingerprint = expectedReportPath ? await analysisFingerprint(executionDirectory) : undefined;
     let stdout = "";
     let stderr = "";
     const python = await analysisPython();
@@ -1231,30 +1484,41 @@ const runPythonTool = defineTool({
         env: { ...process.env, MPLBACKEND: "Agg", EPOS_AGENT_ROOT: ROOT, EPOS_WORKSPACE: executionDirectory },
         signal,
       }));
+    } catch (error) {
+      const details = error as any;
+      const logPath = join(executionDirectory, `analysis-error-${Date.now()}.json`);
+      await writeFile(logPath, JSON.stringify({ script, stdout: details.stdout, stderr: details.stderr, message: details.message }, null, 2));
+      await logProvenance({ action: "analysis-failed", timestamp: now(), script, logPath });
+      await writeStudyDocuments(runtimeConversationState);
+      throw new Error(`Python execution failed. ${String(details.stderr || details.message).trim().split("\n").slice(-1)[0].slice(0, 400)} Full log: ${logPath}`);
     } finally {
       if (temporaryScript) await unlink(script).catch(() => { });
     }
     let outputs: string[] = [];
     let reportPath: string | undefined;
     if (expectedReportPath) {
-      try {
-        reportPath = expectedReportPath;
-        const report = JSON.parse(await readFile(reportPath, "utf8"));
-        outputs = Array.isArray(report.outputs) ? report.outputs.filter((path: unknown): path is string => typeof path === "string") : [];
-      } catch { reportPath = undefined; }
+      reportPath = expectedReportPath;
+      const report = JSON.parse(await readFile(reportPath, "utf8"));
+      outputs = Array.isArray(report.outputs) ? report.outputs.filter((path: unknown): path is string => typeof path === "string") : [];
+      if (!outputs.length || !report.datasets?.length) throw new Error("Analysis produced no usable datasets or figures. Inspect the report before continuing.");
+      for (const output of outputs) {
+        if (!(await realpath(output)).startsWith(await realpath(executionDirectory) + sep)) throw new Error("Analysis output is outside the active bundle.");
+        await access(output);
+      }
+      if (fingerprint !== await analysisFingerprint(executionDirectory)) throw new Error("Analysis modified its inputs or code; rerun the current version before delivery.");
+      runtimeConversationState.study!.analysisDigest = fingerprint;
     }
     const record = { action: "run-python", timestamp: now(), workspace: executionDirectory, script: temporaryScript ? undefined : script, generatedCode: temporaryScript, args, timeoutMs: timeout, stdoutBytes: stdout.length, stderrBytes: stderr.length, outputImagePath: params.outputImagePath, reportPath, outputs };
     const provenanceRecord = await logProvenance(record);
-    const fullResult = { provenance: { ...record, provenanceRecord }, stdout, stderr, reportPath, outputs };
+    const notebook = expectedReportPath ? await finalizeNotebookTool.execute(_id, {}, signal, onUpdate, ctx) : undefined;
+    const fullResult = { provenance: { ...record, provenanceRecord }, stdout, stderr, script: temporaryScript ? undefined : script, reportPath, outputs, ...(notebook ? toolPayload(notebook) : {}) };
     const serialized = JSON.stringify(fullResult);
     let outputLog: string | undefined;
-    let chatResult: unknown = fullResult;
     if (serialized.length > MODEL_RESULT_LIMIT) {
       outputLog = join(executionDirectory, `epos-python-output-${Date.now()}.json`);
       await writeFile(outputLog, serialized);
-      chatResult = { provenance: fullResult.provenance, outputLog, stdoutPreview: stdout.slice(0, 4000), stderrPreview: stderr.slice(0, 2000) };
     }
-    const content: any[] = [...modelResult(chatResult).content];
+    const content: any[] = [...modelResult(fullResult, { script: fullResult.script, reportPath, outputs, notebookPath: (fullResult as any).notebookPath, outputLog }).content];
     if (params.outputImagePath) {
       content.push(await imageBlock(resolveWorkspacePath(params.outputImagePath, executionDirectory)));
     }
@@ -1285,6 +1549,7 @@ const fdsnMcpTool = defineTool({
   async execute(_id, params: any, signal) {
     const allowed = new Set(["fdsn_query_earthquakes", "fdsn_get_earthquake_by_id", "fdsn_get_arrivals_by_id", "fdsn_get_allmagnitudes_by_id", "fdsn_get_allorigins_by_id", "fdsn_get_focalmechanism_by_id"]);
     if (!allowed.has(params.toolName)) throw new Error(`Unsupported mcp-fdsnws-event tool: ${params.toolName}`);
+    requireAcquisition("epos_fdsnws_event_call", params);
     await mcp.start();
     const originalArguments = normalizeFdsnArguments(params.toolName, params.arguments);
     params.arguments = originalArguments;
@@ -1295,7 +1560,7 @@ const fdsnMcpTool = defineTool({
       const serialized = JSON.stringify(payload);
       const serializedBytes = Buffer.byteLength(serialized);
       let outputFile: string | undefined;
-      if (serialized.length > MODEL_RESULT_LIMIT) {
+      {
         requireConfirmedStudy();
         const outputDirectory = activeStudyDataDirectory();
         if (serializedBytes > remainingStudyBudget()) throw new Error("FDSN detail response exceeds the remaining study download budget");
@@ -1307,7 +1572,7 @@ const fdsnMcpTool = defineTool({
         toolName: params.toolName,
         outputFile,
         bytes: outputFile ? serializedBytes : 0,
-        result: outputFile ? { savedInFull: true, preview: serialized.slice(0, MODEL_RESULT_LIMIT) } : payload,
+        result: { savedInFull: true },
       });
     }
 
@@ -1526,7 +1791,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
   description: ["epos_details", "epos_select_candidate", "epos_inspect", "epos_visualize"],
   download: ["epos_prepare_execute", "epos_execute", "epos_fetch"],
   seismology: ["epos_fdsnws_event_call"],
-  analysis: ["read", "epos_prepare_visualization", "epos_run_python", "epos_finalize_notebook", "epos_show_image"],
+  analysis: ["epos_suggest_visualizations", "epos_prepare_visualization", "epos_run_python", "epos_finalize_notebook", "epos_show_image"],
   workspace: ["read", "write", "edit", "ls", "find", "grep"],
 };
 
@@ -1558,7 +1823,6 @@ function createLoadToolsTool(pi: ExtensionAPI) {
 
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
-    // Do not keep the large logo as a persistent widget: it crowds the editor area.
     // The full ASCII-art logo is printed once by the launcher before Pi starts.
     ctx.ui.setTitle("EPOS Agent");
     ctx.ui.setWorkingIndicator({ frames: ["🌍", "🌎", "🌏"], intervalMs: 180 });
@@ -1566,6 +1830,8 @@ export default function (pi: ExtensionAPI) {
     ctx.ui.setStatus("epos-api-mcp", "EPOS MCP starting");
     ctx.ui.setStatus("epos-fdsn", "FDSN MCP on demand");
     runtimeConversationState = restoreConversationState(ctx);
+    preparedPlans.clear();
+    metadataCache.clear();
     await eposMcp.start();
     ctx.ui.setStatus("epos-api-mcp", "EPOS MCP ready");
     resetTools(pi);
@@ -1583,6 +1849,8 @@ export default function (pi: ExtensionAPI) {
     const record = {
       timestamp: now(),
       sessionId: ctx.sessionManager.getSessionId(),
+      studyId: runtimeConversationState.study?.id,
+      phase: runtimeConversationState.study?.phase,
       provider: event.message.provider,
       model: event.message.model,
       activeTools: pi.getActiveTools(),
@@ -1603,6 +1871,10 @@ export default function (pi: ExtensionAPI) {
     if (!nextState) return;
     runtimeConversationState = nextState;
     await writeStudyDocuments(runtimeConversationState);
+    if (runtimeConversationState.study?.phase === "complete") {
+      const python = await analysisPython();
+      await execFileAsync(python, [join(VISUALIZATION_ROOT, "workflow.py"), "inventory", runtimeConversationState.study.bundlePath], { timeout: 120000, maxBuffer: 1024 * 1024 });
+    }
     pi.appendEntry<ConversationState>(CONVERSATION_STATE_TYPE, runtimeConversationState);
   });
   pi.on("tool_call", async (event, ctx) => {
@@ -1653,13 +1925,14 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool(nativeEposOrganizationsTool);
   pi.registerTool(nativeEposDetailsTool);
   pi.registerTool(nativeEposPrepareExecuteTool);
-  pi.registerTool(nativeEposExecuteTool);
+  pi.registerTool({ ...nativeEposExecuteTool, execute: (id, args, signal, update, ctx) => acquire("epos_execute", args, () => nativeEposExecuteTool.execute(id, args, signal, update, ctx)) });
   pi.registerTool(nativeEposInspectTool);
   pi.registerTool(nativeEposVisualizeTool);
-  pi.registerTool(nativeEposFetchTool);
+  pi.registerTool({ ...nativeEposFetchTool, execute: (id, args, signal, update, ctx) => acquire("epos_fetch", args, () => nativeEposFetchTool.execute(id, args, signal, update, ctx)) });
+  pi.registerTool(suggestVisualizationsTool);
   pi.registerTool(prepareVisualizationTool);
   pi.registerTool(runPythonTool);
   pi.registerTool(finalizeNotebookTool);
   pi.registerTool(showImageTool);
-  pi.registerTool(fdsnMcpTool);
+  pi.registerTool({ ...fdsnMcpTool, execute: (id, args, signal, update, ctx) => acquire("epos_fdsnws_event_call", args, () => fdsnMcpTool.execute(id, args, signal, update, ctx)) });
 }

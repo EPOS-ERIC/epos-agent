@@ -23,7 +23,7 @@ HAS_RASTER = importlib.util.find_spec("rasterio") is not None
 class DataAndPlotTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
-        self.bundle = Path(self.temporary.name)
+        self.bundle = Path(self.temporary.name).resolve()
         (self.bundle / "data").mkdir()
         (self.bundle / "figures").mkdir()
 

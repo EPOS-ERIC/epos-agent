@@ -986,6 +986,7 @@ async def tool_prepare(args: dict[str, Any]) -> dict[str, Any]:
     return result(
         {
             "plan_id": plan,
+            "resolved_plan": {**plan_data, "params": report["resolved_params"]},
             "requires_confirmation": confirm,
             "execution": {
                 "endpoint": execution_path,
@@ -1096,16 +1097,15 @@ async def tool_fetch(args: dict[str, Any]) -> dict[str, Any]:
     if not url:
         return error("Only public HTTP/HTTPS URLs are supported.")
     response = await http_get(url, 120)
-    return (
-        result(
-            {
-                "bytes": response["bytes"],
-                **save("fetched", response["body"], response["ct"]),
-            }
-        )
-        if response["ok"]
-        else error(f"Gateway error {response['status']}.")
-    )
+    if not response["ok"]:
+        return error(f"Gateway error {response['status']}.")
+    no_data = response.get("status") == 204 or response["bytes"] == 0
+    return result({
+        "bytes": response["bytes"], "status": response.get("status"),
+        "content_type": response["ct"], "no_data": no_data,
+        **completeness_fields(response),
+        **({} if no_data else save("fetched", response["body"], response["ct"])),
+    })
 
 
 TOOL_SCOPES = {

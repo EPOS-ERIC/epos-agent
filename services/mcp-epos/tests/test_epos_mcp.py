@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 import urllib.parse
 from pathlib import Path
 
@@ -15,6 +16,19 @@ from tools.epos_results import (
 
 
 class MCPUnitTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fetch_preserves_empty_and_paginated_outcomes(self):
+        async def fake_get(url, timeout=60):
+            body = b"" if url.endswith("empty") else b'{"next":"page-2"}'
+            return {"ok": True, "status": 204 if not body else 200, "bytes": len(body),
+                    "body": body, "text": body.decode(), "ct": "application/json"}
+        with patch.object(m, "public_http_url", side_effect=lambda value: value), patch.object(m, "http_get", side_effect=fake_get):
+            empty = await m.tool_fetch({"url": "https://fixture.test/empty"})
+            paginated = await m.tool_fetch({"url": "https://fixture.test/pages"})
+        self.assertTrue(empty["no_data"])
+        self.assertNotIn("artifact_id", empty)
+        self.assertTrue(paginated["paginationDetected"])
+        self.assertEqual(paginated["scientificCompleteness"], "not_verified")
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.old_state, self.old_artifacts = m.STATE, m.ARTIFACTS

@@ -133,7 +133,7 @@ $piArgs = @(
   "--extension", (Join-Path $Root "tools/agent-runtime/index.ts"),
   "--theme", (Join-Path $Root "themes/epos-corporate.json"),
   "--use-theme", "epos-corporate",
-  "--tools", "read,grep,find,ls,write,edit,epos_load_tools,epos_manage_study,epos_search,epos_search_page,epos_select_candidate,epos_search_filter,epos_organizations,epos_details,epos_prepare_execute,epos_execute,epos_inspect,epos_visualize,epos_fetch,epos_prepare_visualization,epos_run_python,epos_finalize_notebook,epos_show_image,epos_fdsnws_event_call"
+  "--tools", "read,grep,find,ls,write,edit,epos_load_tools,epos_manage_study,epos_search,epos_search_page,epos_select_candidate,epos_search_filter,epos_organizations,epos_details,epos_prepare_execute,epos_execute,epos_inspect,epos_visualize,epos_fetch,epos_suggest_visualizations,epos_prepare_visualization,epos_run_python,epos_finalize_notebook,epos_show_image,epos_fdsnws_event_call"
 )
 if ($provider) { $piArgs += @("--provider", $provider) }
 if ($model) { $piArgs += @("--model", $model) }

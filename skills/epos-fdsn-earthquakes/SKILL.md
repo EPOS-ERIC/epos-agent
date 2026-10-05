@@ -6,7 +6,7 @@ license: CC-BY-4.0
 
 # FDSN earthquake events
 
-Load `seismology` with `epos_load_tools`, then use `fdsn_query_earthquakes` for event searches and the detail operation for a selected event.
+Use `epos_manage_study(action="prepare")` to include a request with tool `epos_fdsnws_event_call` and arguments `{toolName: "fdsn_query_earthquakes", arguments: {...}}`, specifying dates and datacenter. Detail requests also belong in the plan and require an observed event ID. `action="download"` obtains user-interface approval and executes all planned sources, including FDSN. Never fetch observations before approval, even for a small preview.
 
 Collect missing scientific filters in the workflow's single initial question block. Preserve exact time, spatial, depth, magnitude, ordering, and datacenter choices without inventing them. Resolve a named area from authoritative metadata when possible; If a requested area is ambiguous and cannot be resolved (e.g., "Extended Etna"), DO NOT directly ask for a latitude/longitude pair. Instead, propose these 3 options to the user:
 1. Let the agent propose a known point as the center.

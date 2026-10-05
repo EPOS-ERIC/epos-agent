@@ -5,12 +5,12 @@ description: Generates deterministic scientific plots for saved EPOS datasets fr
 
 # Deterministic EPOS visualization
 
-Load `analysis` and work only inside the active study bundle. Call `epos_prepare_visualization`, run the saved `code/analysis.py` with `epos_run_python`, and use `epos_finalize_notebook` only if the researcher requests the notebook. Do not reproduce the reusable plotting library in a tool call or notebook.
+Load `analysis` and call `epos_suggest_visualizations` on downloaded files. Offer compatible suggestions unless the researcher has already chosen a plot. Call `epos_prepare_visualization` and run the saved `code/analysis.py` with `epos_run_python`; successful analysis automatically produces a verified notebook. Use `epos_finalize_notebook` to retry finalization after correcting an error. Do not reproduce the reusable plotting library in a tool call or notebook.
 
 ## Requirements and defaults
 
-Never hand-write `requirements.txt` or guess dependencies. `epos_finalize_notebook` must derive them from the actual imports and resolved visualization features, and must reject unmapped third-party imports. The generated notebook installs that file in its first cell with `%pip install -r requirements.txt`.
-Generate and display static PNG outputs first with `interactive: false`. After they succeed, offer an interactive version; regenerate with `interactive: true` only after explicit confirmation and display the HTML in the terminal. Then propose a Jupyter Notebook with the code to reproduce it. Create the notebook only when explicitly requested and do not create a placeholder at the beginning of the study.
+Never hand-write `requirements.txt` or guess dependencies. Notebook finalization derives pinned requirements from actual imports and resolved features and rejects unmapped imports. The first notebook cell explains how to install those requirements once; verification executes the analysis cells in the current environment on a copy of the bundle.
+Generate and display static PNG outputs first with `interactive: false`. Interactive HTML is optional when requested. The verified notebook is a standard deliverable, not an additional question.
 
 **Workflow ordering:** The agent must NEVER propose visualization or analysis options (plots, maps, scatter) before physically acquiring the data. Make your graphical proposals only based on the nature and quantity of the data just downloaded and verified.
 
@@ -48,7 +48,7 @@ Choose the smallest set that answers the scientific question:
 - gridded coverage: raster or contour plot using declared axes and CRS;
 - OGC map layer: render the declared layer for the confirmed extent, then overlay compatible saved observations when requested.
 
-Static maps use the token-free NASA GIBS satellite layer by default, render selected authoritative WMS layers in the PNG, and fall back to a coordinate grid when remote imagery is unavailable. Event markers scale with magnitude, the largest 10% use stars, and stations use triangles. Interactive maps additionally provide OpenStreetMap. Satellite imagery is visual context rather than scientific data; preserve provider attribution.
+Static maps default to `basemap: "none"` with no remote layers or topography, for offline reproduction. Use satellite imagery or WMS only when requested; preserve attribution and document their network dependency. Event markers scale with magnitude, the largest 10% use stars, and stations use triangles.
 
 Every figure must include a legend and label both axes with units from metadata when available, or UTC/date context for temporal axes. Keep missing or invalid records out of the plotted subset but report how many were excluded. Automated observations are preliminary and must remain distinct from scientific validation.
 

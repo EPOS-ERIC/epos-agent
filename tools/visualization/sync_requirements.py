@@ -75,6 +75,7 @@ def main() -> None:
     args = parser.parse_args()
     bundle = args.bundle.resolve()
     requirements = requirements_for_bundle(bundle)
+    requirements.append(f"ipykernel=={importlib.metadata.version('ipykernel')}")
     (bundle / "notebooks" / "requirements.txt").write_text("\n".join(requirements) + "\n", encoding="utf-8")
     print(json.dumps({"requirements": requirements, "path": str(bundle / "notebooks" / "requirements.txt")}))
 

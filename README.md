@@ -69,13 +69,13 @@ On Windows, Gemini can be configured interactively from the installation directo
 
 Each user turn starts with only file reading and the internal `epos_load_tools` router. The model calls the router automatically to activate only the required capability. The EPOS MCP is initialized when the agent session starts and is the primary source for EPOS discovery, metadata and downloads; the specialist FDSN MCP remains on demand.
 
-The catalogue adapter traverses all result pages internally, deduplicates candidates and gives the model compact metadata for ranking. Chat shows only relevant service or dataset titles grouped by scientific role; technical IDs remain in state and provenance. Catalogue discovery never limits records in a requested scientific dataset. Tool outputs follow the [MCP tool contract](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) and use `structuredContent`, while raw catalogue facets and redundant linked-entity payloads stay out of the model context.
+The catalogue adapter traverses all cached MCP result pages internally, deduplicates candidates and saves the full result list locally. The model receives up to 30 compact candidates; filters and cached pages expose the remainder. Metadata requests use a five-minute session cache. Chat shows relevant service or dataset titles grouped by scientific role. Discovery coverage is limited to the catalogue queries performed; it is not a guarantee of finding every scientifically relevant dataset. Pagination, batch downloads, file inspection and notebook assembly run without model calls between their mechanical steps.
 
 ## Guided study workflow
 
-New studies follow a provider-neutral workflow: context card, scientific question, service selection, three targeted analysis/plot suggestions plus “Valuta altre opzioni”, one data-acquisition confirmation, preliminary visualization and reusable Python analysis. Missing essentials are collected in one compact question block. Each study is stored as a self-contained bundle under `~/epos-agent/workspace/<study>-<timestamp>/`; a dependency-complete Jupyter notebook is finalized only when requested and only after the analysis succeeds.
+New studies follow this order: question → discovery → exact acquisition plan → user-interface approval → batch download → inspection and compatible visualization suggestions → selected visualization → reusable code and an executed Jupyter notebook. Missing essentials are collected in one compact question block. Each study is stored under `~/epos-agent/workspace/<study>-<timestamp>/`. The runtime requires recorded acquisition outcomes before inspection and a successful execution of the current `code/analysis.py` before notebook finalization.
 
-Standard plots use the bundled `epos_viz` library and a compact `visualization.json` instead of regenerating plotting code. Geographic data produces an interactive Folium/Leaflet map and a static PNG; OpenStreetMap and NASA GIBS provide token-free map layers with attribution and a coordinate-grid fallback. `requirements.txt` is derived from actual imports and selected optional features rather than guessed by the model.
+Standard plots use the bundled `epos_viz` library and `code/visualization.json`. Static maps default to an offline coordinate grid; remote layers and interactive HTML are optional. Running the standard analysis automatically builds the notebook and executes it on a copy of the bundle with the current Python environment, comparing input hashes, counts, metrics and output names. Code or input changes invalidate prior verification. Pinned requirements come from actual imports and resolved features. This is a local reproduction check, not an installation test on every operating system.
 
 ## Security and runtime data
 
@@ -83,7 +83,30 @@ Sessions, cache, provenance logs, generated workspace files, Python environments
 
 ## Download safety
 
-Catalogue searches, metadata and service descriptions run without confirmation. Calls that return scientific data wait for one researcher confirmation covering services, parameters, formats and the chosen analysis; no download-size estimate is produced. The cumulative raw-data budget is enforced at transfer time at 1 GiB per study. Complete responses are saved in the study bundle, while model context receives only essential metadata, measured counts, paths and at most five representative records. Transport completeness and scientific dataset completeness are reported separately.
+Catalogue searches and distribution descriptions run without confirmation. Acquisition tools require an active study and a user-interface approval bound to the exact requests and resolved EPOS plans. FDSN detail calls and arbitrary public URL fetches are included; a metadata flag cannot bypass approval. The batch records downloaded, no-data, partial, access-denied, unavailable and failed outcomes. Repeating the batch reuses recorded results; `retryFailed: true` requests a new approval and retries unsuccessful transfers once while preserving earlier attempts. Restored sessions require new approval and fresh EPOS plans.
+
+The retained-data budget is 1 GiB per study. The EPOS server additionally limits each response to 50 MiB; the wrapper checks the remaining study budget before copying the server artifact. FDSN enforces the remaining budget while writing records. These limits do not measure all wire traffic. Scientific completeness remains distinct from HTTP transfer completion. EPOS responses with pagination evidence are marked partial; arbitrary provider pagination is not automatically followed.
+
+`metadata/` contains the approved plan, provenance, all acquisition attempts, inspection/analysis reports and the final inventory with sizes and SHA-256 hashes. Inventory records Python, available Pi/Git versions and source hashes. Large payloads and logs stay on disk. The approval checks govern acquisition tools; custom Python is not an operating-system network sandbox.
+
+## Workflow verification
+
+Runtime tests are in `tools/agent-runtime/tests/workflow.test.cjs`. They use the real TypeScript wrapper with a simulated Pi interface; the optional MCP test starts the real stdio server with offline HTTP fixtures, and the optional analysis test executes an actual notebook. No model API or live scientific service is needed.
+
+Use a TypeScript 5.x development installation (the tests use its compiler API):
+
+```bash
+TYPESCRIPT_PATH=/path/to/typescript node --test tools/agent-runtime/tests/workflow.test.cjs
+```
+
+Set `MCP_TEST_PYTHON` to the installed MCP Python interpreter and `ANALYSIS_TEST_PYTHON` to the visualization interpreter with `requirements-core.txt` installed to enable both integration tests. Jupyter needs local loopback sockets. Without these variables, integration tests explicitly report skipped. Existing component tests remain:
+
+```bash
+PYTHONPATH=services/mcp-epos /path/to/mcp/python -m unittest discover -s services/mcp-epos/tests
+/path/to/visualization/python -m unittest discover -s tools/visualization/tests
+```
+
+Compare `logs/token-usage.jsonl` across identical study requests and providers to measure token/call savings; the workflow checks do not establish equal scientific choices across models. No live multi-model benchmark is implied by the offline tests.
 
 ## Included FDSN service
 
