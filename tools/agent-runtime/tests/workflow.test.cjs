@@ -27,7 +27,8 @@ async function harness(t) {
   const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   vm.runInContext(compiled + '\nexports.testing = {eposMcp, mcp, preparedPlans, state: () => runtimeConversationState, requireDownloads, analysisFingerprint, writeStudyDocuments, nextConversationState};', sandbox);
   const tools = new Map(), events = new Map();
-  sandbox.exports.default({ registerTool: tool => tools.set(tool.name, tool), on: (name, handler) => events.set(name, handler), registerCommand() {}, appendEntry() {} });
+  let activeTools = [];
+  sandbox.exports.default({ registerTool: tool => tools.set(tool.name, tool), getAllTools: () => [...tools.values()], setActiveTools: names => { activeTools = names; }, on: (name, handler) => events.set(name, handler), registerCommand() {}, appendEntry() {} });
   const calls = [];
   const api = sandbox.exports.testing;
   api.eposMcp.start = api.mcp.start = async () => {};
@@ -64,8 +65,15 @@ async function harness(t) {
     }
     await call('epos_manage_study', { action: 'prepare', services });
   }
-  return { root, api, tools, events, call, calls, ctx, prepare, approvals: () => approvals, approvalPrompts };
+  return { root, api, tools, events, call, calls, ctx, prepare, approvals: () => approvals, approvalPrompts, activeTools: () => activeTools };
 }
+
+test('download capability keeps the study workflow available', async t => {
+  const h = await harness(t);
+  await h.call('epos_load_tools', { capability: 'download' });
+  assert.ok(h.activeTools().includes('epos_manage_study'));
+  assert.ok(h.activeTools().includes('epos_prepare_execute'));
+});
 
 test('discovery traverses every cached page without model calls', async t => {
   const h = await harness(t);
@@ -134,7 +142,7 @@ test('one approval executes the batch, records failure, and avoids duplicate tra
   const result = await h.call('epos_manage_study', { action: 'download' });
   assert.deepEqual(Array.from(result.downloadSummary, item => item.outcome), ['downloaded', 'unavailable']);
   assert.equal(h.approvals(), 1);
-  assert.deepEqual(h.approvalPrompts[0], ['Conferma download', 'Sono pronto a scaricare i dati. Confermi di procedere?']);
+  assert.deepEqual(h.approvalPrompts[0], ['Confirm download', 'The data are ready to download. Do you want to continue?']);
   assert.doesNotMatch(h.approvalPrompts[0].join(' '), /plan_id|\{|\}/);
   const before = h.calls.length;
   await h.call('epos_manage_study', { action: 'download' });
@@ -147,6 +155,15 @@ test('one approval executes the batch, records failure, and avoids duplicate tra
   assert.ok(h.api.state().study.downloadedBytes > 0);
   h.api.state().study.services[0].request.arguments.plan_id = 'another-plan';
   await assert.rejects(h.call('epos_execute', { plan_id: 'another-plan' }), /approval/);
+});
+
+test('download approval follows the session language', async t => {
+  const h = await harness(t);
+  await h.events.get('before_agent_start')({ prompt: 'Vorrei scaricare i dati.', systemPrompt: '', systemPromptOptions: {} });
+  await h.events.get('before_agent_start')({ prompt: 'Yes, download them.', systemPrompt: '', systemPromptOptions: {} });
+  await h.prepare();
+  await h.call('epos_manage_study', { action: 'download' });
+  assert.deepEqual(h.approvalPrompts[0], ['Conferma download', 'Sono pronto a scaricare i dati. Confermi di procedere?']);
 });
 
 test('a different request cannot reuse an existing approval; stale reports cannot finalize', async t => {
@@ -218,8 +235,18 @@ test('real local analysis creates and executes a notebook without changing acqui
   const suggestions = await h.call('epos_suggest_visualizations');
   assert.ok(suggestions.suggestions.some(item => item.kind === 'map'));
   await h.call('epos_prepare_visualization', { recipe: { name: 'custom' }, basemap: 'none', datasets: [{ path: path.relative(study.bundlePath, study.downloads[0].outputFile), role: 'events', plots: ['distribution'] }] });
-  const result = await h.call('epos_run_python', { scriptPath: 'code/analysis.py', timeoutMs: 120000 });
+  const args = { scriptPath: 'code/analysis.py', timeoutMs: 120000, outputImagePath: 'figures/static-map.png' };
+  const response = await h.tools.get('epos_run_python').execute('call', args, undefined, undefined, h.ctx);
+  await h.events.get('tool_result')({ toolName: 'epos_run_python', input: args, ...response });
+  const result = response.details;
   assert.ok(result.outputs.length > 0);
+  const images = response.content.filter(item => item.type === 'image');
+  const imagePaths = result.outputs.filter(file => file.endsWith('.png'));
+  assert.equal(images.length, imagePaths.length, 'all generated plots should display, without duplicating the explicit image');
+  for (const [index, file] of imagePaths.entries()) {
+    assert.equal(images[index].mimeType, 'image/png');
+    assert.equal(images[index].data, (await fs.readFile(file)).toString('base64'));
+  }
   const notebook = JSON.parse(await fs.readFile(result.notebookPath));
   assert.ok(notebook.cells.filter(cell => cell.cell_type === 'code').every(cell => cell.execution_count > 0));
   assert.match(notebook.cells.find(cell => cell.id === 'display-outputs').source.join(''), /IFrame\(src=link/);

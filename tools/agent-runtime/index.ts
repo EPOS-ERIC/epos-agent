@@ -34,6 +34,7 @@ const CONVERSATION_STATE_TYPE = "epos-conversation-state";
 const MAX_STATE_FILES = 100;
 
 type StateValue = string | number | boolean;
+type InterfaceLanguage = "en" | "it";
 type WorkflowPhase = "context" | "question" | "services" | "download" | "visualization" | "code" | "complete";
 type StudyService = {
   resourceId: string;
@@ -70,6 +71,7 @@ type ConversationState = {
   filters: Record<string, StateValue>;
   selectedResourceId?: string;
   format?: string;
+  interfaceLanguage?: InterfaceLanguage;
   files: string[];
   provenanceRecords: Record<string, unknown>[];
   study?: StudyState;
@@ -83,6 +85,16 @@ function emptyConversationState(): ConversationState {
 let runtimeConversationState = emptyConversationState();
 const preparedPlans = new Map<string, Record<string, any>>();
 const metadataCache = new Map<string, { timestamp: number; result: any }>();
+
+function detectInterfaceLanguage(prompt: string) {
+  return /\b(?:il|lo|la|gli|le|un|una|vorrei|voglio|scaricare|dati|grafico|conferma|procedere)\b/i.test(prompt) ? "it" : "en";
+}
+
+function downloadApprovalText() {
+  return runtimeConversationState.interfaceLanguage === "it"
+    ? ["Conferma download", "Sono pronto a scaricare i dati. Confermi di procedere?"]
+    : ["Confirm download", "The data are ready to download. Do you want to continue?"];
+}
 
 function canonical(value: any): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -189,6 +201,7 @@ function storedConversationState(data: unknown): ConversationState | undefined {
   state.domain = typeof candidate.domain === "string" ? candidate.domain : undefined;
   state.selectedResourceId = typeof candidate.selectedResourceId === "string" ? candidate.selectedResourceId : undefined;
   state.format = typeof candidate.format === "string" ? candidate.format : undefined;
+  state.interfaceLanguage = candidate.interfaceLanguage === "it" || candidate.interfaceLanguage === "en" ? candidate.interfaceLanguage : undefined;
   state.updatedAt = typeof candidate.updatedAt === "string" ? candidate.updatedAt : state.updatedAt;
   state.filters = pickStateFilters(candidate.filters && typeof candidate.filters === "object" ? candidate.filters : {}, Object.keys(candidate.filters || {}).slice(0, 30));
   state.files = recentPaths([], ...(Array.isArray(candidate.files) ? candidate.files : []));
@@ -531,6 +544,18 @@ async function imageBlock(path: string) {
   return { type: "image" as const, data, mimeType };
 }
 
+function terminalSupportsInlineImages() {
+  const override = process.env.PI_IMAGE_PROTOCOL?.toLowerCase();
+  if (override === "kitty" || override === "iterm2") return true;
+  if (override === "none" || override === "0" || process.env.TMUX) return false;
+  const term = process.env.TERM?.toLowerCase() || "";
+  const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
+  if (term.startsWith("screen") || term.startsWith("tmux")) return false;
+  return Boolean(process.env.KITTY_WINDOW_ID || process.env.GHOSTTY_RESOURCES_DIR || process.env.WEZTERM_PANE
+    || process.env.WARP_SESSION_ID || process.env.WARP_TERMINAL_SESSION_UUID || process.env.ITERM_SESSION_ID
+    || ["kitty", "ghostty", "wezterm", "warpterminal", "iterm.app"].includes(termProgram));
+}
+
 function now() { return new Date().toISOString(); }
 async function logProvenance(record: Record<string, unknown>) {
   await mkdir(PROV_DIR, { recursive: true });
@@ -831,6 +856,7 @@ function createWorkflowTool() {
         };
         runtimeConversationState = {
           ...emptyConversationState(),
+          interfaceLanguage: runtimeConversationState.interfaceLanguage,
           intent: "manage_study",
           filters: pickStateFilters(params.filters || {}, Object.keys(params.filters || {}).slice(0, 30)),
           study,
@@ -887,7 +913,7 @@ function createWorkflowTool() {
           const digest = planDigest(study);
           if (!study.confirmed || study.approval?.digest !== digest || params.retryFailed) {
             if (!ctx.hasUI) throw new Error("Acquisition approval requires an interactive user interface.");
-            const approved = await ctx.ui.confirm("Conferma download", "Sono pronto a scaricare i dati. Confermi di procedere?");
+            const approved = await ctx.ui.confirm(...downloadApprovalText());
             await logProvenance({ action: "approval", approved, digest, timestamp: now(), sessionId: ctx.sessionManager.getSessionId() });
             if (!approved) return modelResult({ approved: false, message: "Download declined; no acquisition started." });
             if (digest !== planDigest(study) || runtimeConversationState.study !== study) throw new Error("The plan changed during approval. Review it again.");
@@ -1519,8 +1545,10 @@ const runPythonTool = defineTool({
       await writeFile(outputLog, serialized);
     }
     const content: any[] = [...modelResult(fullResult, { script: fullResult.script, reportPath, outputs, notebookPath: (fullResult as any).notebookPath, outputLog }).content];
-    if (params.outputImagePath) {
-      content.push(await imageBlock(resolveWorkspacePath(params.outputImagePath, executionDirectory)));
+    const imagePaths = new Set(await Promise.all(outputs.filter(path => imageMime(path)).map(path => realpath(path))));
+    if (params.outputImagePath) imagePaths.add(await realpath(resolveWorkspacePath(params.outputImagePath, executionDirectory)));
+    for (const imagePath of imagePaths) {
+      content.push({ type: "text", text: `Displaying image: ${imagePath}` }, await imageBlock(imagePath));
     }
     return { content, details: { ...fullResult, outputLog } };
   },
@@ -1529,11 +1557,13 @@ const runPythonTool = defineTool({
 const showImageTool = defineTool({
   name: "epos_show_image",
   label: "EPOS Show Image",
-  description: "Display an existing PNG/JPEG/GIF/WebP image from ~/epos-agent/workspace inline in the Pi TUI/chat.",
+  description: "Display an existing PNG/JPEG/GIF/WebP image from ~/epos-agent/workspace inline, or open it in the macOS viewer when the terminal does not support inline images.",
   parameters: Type.Object({ path: Type.String({ description: "Image path inside ~/epos-agent/workspace" }) }),
   async execute(_id, params: any) {
     const abs = resolveWorkspacePath(params.path, runtimeConversationState.study?.bundlePath || WORKSPACE);
-    return { content: [{ type: "text", text: `Displaying image: ${abs}` }, await imageBlock(abs)], details: { path: abs, mimeType: imageMime(abs) } };
+    const openedExternally = process.platform === "darwin" && !terminalSupportsInlineImages();
+    if (openedExternally) await execFileAsync("open", [abs]);
+    return { content: [{ type: "text", text: `${openedExternally ? "Opened" : "Displaying"} image: ${abs}` }, await imageBlock(abs)], details: { path: abs, mimeType: imageMime(abs), openedExternally } };
   },
 });
 
@@ -1789,7 +1819,7 @@ const TOOL_GROUPS: Record<string, string[]> = {
   workflow: ["epos_manage_study"],
   catalog_search: ["epos_search", "epos_search_page", "epos_search_filter", "epos_organizations"],
   description: ["epos_details", "epos_select_candidate", "epos_inspect", "epos_visualize"],
-  download: ["epos_prepare_execute", "epos_execute", "epos_fetch"],
+  download: ["epos_manage_study", "epos_prepare_execute", "epos_execute", "epos_fetch"],
   seismology: ["epos_fdsnws_event_call"],
   analysis: ["epos_suggest_visualizations", "epos_prepare_visualization", "epos_run_python", "epos_finalize_notebook", "epos_show_image"],
   workspace: ["read", "write", "edit", "ls", "find", "grep"],
@@ -1838,6 +1868,9 @@ export default function (pi: ExtensionAPI) {
   });
   pi.on("session_tree", async (_event, ctx) => { runtimeConversationState = restoreConversationState(ctx); });
   pi.on("before_agent_start", async (event) => {
+    if (!runtimeConversationState.interfaceLanguage) {
+      runtimeConversationState = { ...runtimeConversationState, interfaceLanguage: detectInterfaceLanguage(event.prompt) };
+    }
     resetTools(pi);
     const stateBlock = `<epos-conversation-state>\nCurrent workflow state: ${JSON.stringify(modelConversationState(runtimeConversationState))}\nReuse confirmed values when relevant. New user instructions take precedence; never invent missing values.\n</epos-conversation-state>`;
     const systemPrompt = event.systemPrompt.replace(/\n*<epos-conversation-state>[\s\S]*?<\/epos-conversation-state>/g, "");
