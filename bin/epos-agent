@@ -47,6 +47,13 @@ if [[ -z "${PI_BIN:-}" || ! -x "$PI_BIN" ]]; then
   exit 127
 fi
 mkdir -p "$ROOT"/{cache,sessions,logs,logs/provenance,config/pi-agent}
+node -e '
+  const fs = require("fs");
+  const file = process.argv[1];
+  const settings = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  settings.quietStartup = true;
+  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+' "$ROOT/config/pi-agent/settings.json"
 if [[ -f "$ROOT/config/profile.env" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/config/profile.env"
@@ -55,32 +62,53 @@ provider="${EPOS_PROVIDER:-${PI_PROVIDER:-}}"
 model="${EPOS_MODEL:-${PI_MODEL:-}}"
 thinking="${EPOS_THINKING:-${PI_REASONING_LEVEL:-}}"
 
-# Start from a clean terminal before handing control to Pi's TUI.
-if [[ -t 1 ]]; then
+# Render the original text banner with the image-derived agent on its right.
+EPOS_GREEN=""; EPOS_GOLD=""; EPOS_WHITE=""; EPOS_DIM=""; EPOS_RESET=""
+agent_art="$ROOT/bin/assets/agent-mono.txt"
+if [[ -t 1 && "${TERM:-dumb}" != "dumb" ]]; then
   printf '\033[2J\033[H'
+  if [[ -z "${NO_COLOR+x}" ]]; then
+    EPOS_GREEN=$'\033[38;2;43;66;45m'
+    EPOS_GOLD=$'\033[38;2;198;148;54m'
+    EPOS_WHITE=$'\033[38;2;255;255;255m'
+    EPOS_DIM=$'\033[38;2;111;138;115m'
+    EPOS_RESET=$'\033[0m'
+    agent_art="$ROOT/bin/assets/agent.ansi"
+  fi
 fi
 
-if [[ -t 1 ]]; then
-  EPOS_GREEN=$'\033[38;2;43;66;45m'
-  EPOS_GOLD=$'\033[38;2;198;148;54m'
-  EPOS_WHITE=$'\033[38;2;255;255;255m'
-  EPOS_DIM=$'\033[38;2;111;138;115m'
-  EPOS_RESET=$'\033[0m'
-else
-  EPOS_GREEN=""; EPOS_GOLD=""; EPOS_WHITE=""; EPOS_DIM=""; EPOS_RESET=""
+banner_columns="${COLUMNS:-}"
+if [[ -z "$banner_columns" && -t 1 ]]; then
+  banner_columns="$(tput cols 2>/dev/null || true)"
 fi
-
-printf '%b' "
+[[ "$banner_columns" =~ ^[0-9]+$ ]] || banner_columns=80
+banner_columns=$((10#$banner_columns))
+if (( banner_columns >= 84 )); then
+  epos_rows=(
+  "${EPOS_WHITE}███████╗██████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}███████╗${EPOS_RESET}"
+  "${EPOS_WHITE}██╔════╝██╔══██╗██╔═══██╗██╔════╝${EPOS_RESET}"
+  "${EPOS_WHITE}█████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██████╔╝██║ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██║███████╗${EPOS_RESET}"
+  "${EPOS_WHITE}██╔══╝ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}██╔═══╝ ██║ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██║╚════██║${EPOS_RESET}"
+  "${EPOS_WHITE}███████╗██║  ${EPOS_DIM}‧${EPOS_RESET}${EPOS_WHITE}  ╚██████╔╝███████║${EPOS_RESET}"
+  "${EPOS_WHITE}╚══════╝╚═╝  ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}   ╚═════╝ ╚══════╝${EPOS_RESET}"
+  )
+  printf '%s' "
 ${EPOS_GREEN}╔══════════════════════════════════════════════════════════════════════════════════╗${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}                   ${EPOS_GOLD}●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}███████╗██████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}███████╗${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}               ${EPOS_GOLD}●●●●●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}██╔════╝██╔══██╗██╔═══██╗██╔════╝${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}              ${EPOS_GOLD}●●●●●●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}█████╗${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██████╔╝██║ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██║███████╗${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}              ${EPOS_GOLD}●●●●●●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}██╔══╝ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}██╔═══╝ ██║ ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE} ██║╚════██║${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}                ${EPOS_GOLD}●●●●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}███████╗██║  ${EPOS_DIM}‧${EPOS_RESET}${EPOS_WHITE}  ╚██████╔╝███████║${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}                   ${EPOS_GOLD}●●●•${EPOS_RESET}${EPOS_DIM}∙·‧${EPOS_RESET}${EPOS_WHITE}╚══════╝╚═╝  ${EPOS_DIM}·${EPOS_RESET}${EPOS_WHITE}   ╚═════╝ ╚══════╝${EPOS_RESET}                       ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}                         ${EPOS_GOLD}EUROPEAN PLATE OBSERVING SYSTEM${EPOS_RESET}                          ${EPOS_GREEN}║${EPOS_RESET}
+"
+  row=0
+  while IFS= read -r agent_row; do
+    logo_row="                                 "
+    if (( row >= 2 && row < 8 )); then
+      logo_row="${epos_rows[row - 2]}"
+    fi
+    printf '%s║%s                 %s%s %s%s               %s║%s\n' \
+      "$EPOS_GREEN" "$EPOS_RESET" "$logo_row" "$EPOS_RESET" \
+      "$agent_row" "$EPOS_RESET" "$EPOS_GREEN" "$EPOS_RESET"
+    row=$((row + 1))
+  done < "$agent_art"
+  printf '%s\n' "${EPOS_GREEN}║${EPOS_RESET}                         ${EPOS_GOLD}EUROPEAN PLATE OBSERVING SYSTEM${EPOS_RESET}                          ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                     ${EPOS_GOLD}────────────────────────────────────────${EPOS_RESET}                     ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                               ${EPOS_WHITE}EPOS Agent · ${EPOS_RESET}${EPOS_GOLD}V1.0.3${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
@@ -90,6 +118,13 @@ ${EPOS_GREEN}║${EPOS_RESET}             ${EPOS_WHITE}Search${EPOS_RESET} ${EPO
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}╚══════════════════════════════════════════════════════════════════════════════════╝${EPOS_RESET}
 "
+else
+  if (( banner_columns >= 32 )); then
+    cat "$agent_art"
+    printf '\n'
+  fi
+  printf '%s\n' "${EPOS_WHITE}EPOS${EPOS_RESET}" "Agent" "V1.0.3"
+fi
 
 declare -a args=(
   --no-extensions

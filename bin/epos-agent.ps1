@@ -80,29 +80,65 @@ New-Item -ItemType Directory -Force -Path @(
   (Join-Path $Root "logs/provenance"),
   (Join-Path $Root "config/pi-agent")
 ) | Out-Null
+$settingsPath = Join-Path $Root "config/pi-agent/settings.json"
+$settings = if (Test-Path -LiteralPath $settingsPath) {
+  Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+} else {
+  [pscustomobject]@{}
+}
+$settings | Add-Member -NotePropertyName "quietStartup" -NotePropertyValue $true -Force
+$settings | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $settingsPath -Encoding UTF8
 
 Import-Profile (Join-Path $Root "config/profile.env")
 $provider = if ($env:EPOS_PROVIDER) { $env:EPOS_PROVIDER } else { $env:PI_PROVIDER }
 $model = if ($env:EPOS_MODEL) { $env:EPOS_MODEL } else { $env:PI_MODEL }
 $thinking = if ($env:EPOS_THINKING) { $env:EPOS_THINKING } else { $env:PI_REASONING_LEVEL }
 
-Clear-Host
-$escape = [char]27
-$green = "${escape}[38;2;43;66;45m"
-$gold = "${escape}[38;2;198;148;54m"
-$white = "${escape}[38;2;255;255;255m"
-$dim = "${escape}[38;2;111;138;115m"
-$reset = "${escape}[0m"
-$banner = @"
+# Render the original text banner with the image-derived agent on its right.
+$green = ""; $gold = ""; $white = ""; $dim = ""; $reset = ""
+$agentArt = Join-Path $Root "bin/assets/agent-mono.txt"
+$bannerColumns = 80
+if (-not [Console]::IsOutputRedirected) {
+  if ($Host.UI.RawUI.WindowSize.Width -gt 0) {
+    $bannerColumns = $Host.UI.RawUI.WindowSize.Width
+  }
+  if ($env:TERM -ne "dumb" -and $Host.UI.PSObject.Properties["SupportsVirtualTerminal"] -and $Host.UI.SupportsVirtualTerminal) {
+    Clear-Host
+    if (-not (Test-Path Env:NO_COLOR)) {
+      $escape = [char]27
+      $green = "${escape}[38;2;43;66;45m"
+      $gold = "${escape}[38;2;198;148;54m"
+      $white = "${escape}[38;2;255;255;255m"
+      $dim = "${escape}[38;2;111;138;115m"
+      $reset = "${escape}[0m"
+      $agentArt = Join-Path $Root "bin/assets/agent.ansi"
+    }
+  }
+}
+if ($bannerColumns -ge 84) {
+  $eposRows = @(
+    "${white}███████╗██████╗${dim}·${reset}${white} ██████╗${dim}·${reset}${white}███████╗${reset}",
+    "${white}██╔════╝██╔══██╗██╔═══██╗██╔════╝${reset}",
+    "${white}█████╗${dim}·${reset}${white} ██████╔╝██║ ${dim}·${reset}${white} ██║███████╗${reset}",
+    "${white}██╔══╝ ${dim}·${reset}${white}██╔═══╝ ██║ ${dim}·${reset}${white} ██║╚════██║${reset}",
+    "${white}███████╗██║  ${dim}‧${reset}${white}  ╚██████╔╝███████║${reset}",
+    "${white}╚══════╝╚═╝  ${dim}·${reset}${white}   ╚═════╝ ╚══════╝${reset}"
+  )
+  Write-Host @"
 ${green}╔══════════════════════════════════════════════════════════════════════════════════╗${reset}
 ${green}║${reset}                                                                                  ${green}║${reset}
-${green}║${reset}                   ${gold}●●●•${reset}${dim}∙·‧${reset}${white}███████╗██████╗${dim}·${reset}${white} ██████╗${dim}·${reset}${white}███████╗${reset}                       ${green}║${reset}
-${green}║${reset}               ${gold}●●●●●●●•${reset}${dim}∙·‧${reset}${white}██╔════╝██╔══██╗██╔═══██╗██╔════╝${reset}                       ${green}║${reset}
-${green}║${reset}              ${gold}●●●●●●●●•${reset}${dim}∙·‧${reset}${white}█████╗${dim}·${reset}${white} ██████╔╝██║ ${dim}·${reset}${white} ██║███████╗${reset}                       ${green}║${reset}
-${green}║${reset}              ${gold}●●●●●●●●•${reset}${dim}∙·‧${reset}${white}██╔══╝ ${dim}·${reset}${white}██╔═══╝ ██║ ${dim}·${reset}${white}██║╚════██║${reset}                       ${green}║${reset}
-${green}║${reset}                ${gold}●●●●●●•${reset}${dim}∙·‧${reset}${white}███████╗██║  ${dim}‧${reset}${white}  ╚██████╔╝███████║${reset}                       ${green}║${reset}
-${green}║${reset}                   ${gold}●●●•${reset}${dim}∙·‧${reset}${white}╚══════╝╚═╝  ${dim}·${reset}${white}   ╚═════╝ ╚══════╝${reset}                       ${green}║${reset}
 ${green}║${reset}                                                                                  ${green}║${reset}
+"@
+  $row = 0
+  foreach ($agentRow in (Get-Content -LiteralPath $agentArt -Encoding UTF8)) {
+    $logoRow = "                                 "
+    if ($row -ge 2 -and $row -lt 8) {
+      $logoRow = $eposRows[$row - 2]
+    }
+    Write-Host "${green}║${reset}                 ${logoRow}${reset} ${agentRow}${reset}               ${green}║${reset}"
+    $row++
+  }
+  Write-Host @"
 ${green}║${reset}                         ${gold}EUROPEAN PLATE OBSERVING SYSTEM${reset}                          ${green}║${reset}
 ${green}║${reset}                     ${gold}────────────────────────────────────────${reset}                     ${green}║${reset}
 ${green}║${reset}                               ${white}EPOS Agent · ${reset}${gold}V1.0.1${reset}                                ${green}║${reset}
@@ -113,7 +149,13 @@ ${green}║${reset}             ${white}Search${reset} ${gold}│${reset} ${whit
 ${green}║${reset}                                                                                  ${green}║${reset}
 ${green}╚══════════════════════════════════════════════════════════════════════════════════╝${reset}
 "@
-Write-Host $banner
+} else {
+  if ($bannerColumns -ge 32) {
+    Get-Content -LiteralPath $agentArt -Encoding UTF8 | ForEach-Object { Write-Host $_ }
+    Write-Host ""
+  }
+  Write-Host "${white}EPOS${reset}`nAgent`nV1.0.1"
+}
 Write-Host ""
 
 $env:EPOS_AGENT_ROOT = $Root
