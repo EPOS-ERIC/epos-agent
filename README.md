@@ -12,7 +12,7 @@ On Windows 10 or 11, open PowerShell and follow these steps to clone, install an
 
 1. **Clone the repository:**
 ```powershell
-git clone https://github.com/danielebailo/epos-agent.git
+git clone https://github.com/EPOS-ERIC/epos-agent.git
 cd epos-agent
 ```
 
@@ -38,7 +38,7 @@ Open your terminal and follow these steps:
 
 1. **Clone the repository:**
 ```bash
-git clone https://github.com/danielebailo/epos-agent.git
+git clone https://github.com/EPOS-ERIC/epos-agent.git
 cd epos-agent
 ```
 
