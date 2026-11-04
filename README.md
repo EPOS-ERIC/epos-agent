@@ -20,19 +20,19 @@ cd epos-agent
 ```powershell
 .\install.ps1
 ```
-*The installer requires PowerShell 5.1 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer). It installs or updates Git, Node.js and Python when needed, and creates its local runtimes under `%USERPROFILE%\epos-agent`.*
+*The installer requires PowerShell 5.1 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer). It installs or updates Git, Node.js and Python when needed, creates its local runtimes under `%USERPROFILE%\epos-agent`, and adds the `bin\` folder to your user PATH so you can run `epos-agent` from any directory.*
 
 3. **Start the agent:**
-Start the agent by running the following command in your terminal:
+Open a new PowerShell window and run:
 ```powershell
-~\epos-agent\bin\epos-agent.ps1
+epos-agent
 ```
 
 *(To use a different installation directory, set `$env:EPOS_INSTALL_ROOT = "C:\EPOS Agent"` before running `.\install.ps1`. Existing installations are updated automatically preserving your configuration and workspace data.)*
 
 ## Quick start (macOS/Linux)
 
-The installer checks for Node.js (**22.19.0 or newer**), Python (**3.11 or newer**), Git, npm and rsync. If dependencies are missing, `install.sh` asks for permission and installs them using Homebrew (macOS) or your native package manager (Linux). For unattended installation, use `EPOS_AUTO_INSTALL=1`.
+The installer checks for Node.js (**22.19.0 or newer**), Python (**3.11 or newer**), Git and npm. If dependencies are missing, `install.sh` asks for permission and installs them using Homebrew (macOS) or your native package manager (Linux). For unattended installation, use `EPOS_AUTO_INSTALL=1`.
 
 Open your terminal and follow these steps:
 
@@ -46,24 +46,27 @@ cd epos-agent
 ```bash
 ./install.sh
 ```
-*The installer installs `pi coding agent` locally under `~/epos-agent/.runtime`, creates isolated Python environments for the bundled services and reusable visualization pipeline, and keeps runtime data under `~/epos-agent`. It does not install secrets or commit credentials.*
+*The installer works in-place: it installs `pi coding agent`, the Python environments and all runtime data directly inside the cloned folder — no second directory is created. It also creates a global `epos-agent` symlink so you can launch it from anywhere.*
 
-3. **Start the agent:**
+3. **Configure your provider and API key:**
+Edit `config/profile.env` (created from `config/profile.env.example`) and set your API key and provider (Google Gemini, Anthropic Claude, or OpenAI).
+
+4. **Start the agent:**
 ```bash
-~/epos-agent/bin/epos-agent
+epos-agent
 ```
 
-*(To test another installation location without touching an existing installation, run `EPOS_INSTALL_ROOT=/tmp/epos-agent-test ./install.sh` and start it with `EPOS_AGENT_ROOT=/tmp/epos-agent-test /tmp/epos-agent-test/bin/epos-agent`)*
+*(To install into a different directory, run `EPOS_INSTALL_ROOT=/other/path ./install.sh` from the repo. `EPOS_AGENT_ROOT` is not needed: the launcher always finds its root by following the symlink back to the repo.)*
 
 ## Configuration
 
-Copy/edit `config/profile.env.example` as `config/profile.env`, set `EPOS_PROVIDER`, `EPOS_MODEL` and optionally `EPOS_THINKING`, or leave them unset to use the current Pi configuration. No provider or model is selected by default. Authentication is managed by Pi and must be configured locally.
+Configure your provider credentials in `config/profile.env`. A template is available at `config/profile.env.example` with ready-to-use settings for Google Gemini, Anthropic Claude and OpenAI:
 
-On Windows, Gemini can be configured interactively from the installation directory with:
+- **Google Gemini**: set `GEMINI_API_KEY`, `EPOS_PROVIDER=google`, `EPOS_MODEL=gemini-2.5-pro` (and optionally `EPOS_THINKING=medium`)
+- **Anthropic Claude**: set `ANTHROPIC_API_KEY`, `EPOS_PROVIDER=anthropic`, `EPOS_MODEL=claude-sonnet-4-5`
+- **OpenAI**: set `OPENAI_API_KEY`, `EPOS_PROVIDER=openai`, `EPOS_MODEL=gpt-4o`
 
-```powershell
-.\bin\epos-agent.ps1 -SetupGemini
-```
+Alternatively, you can leave them unset to use the current Pi configuration or export the standard environment variables directly.
 
 ## Token-efficient tools
 

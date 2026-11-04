@@ -1,43 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="${EPOS_AGENT_ROOT:-$HOME/epos-agent}"
-PI_BIN="${PI_BIN:-$ROOT/.runtime/node_modules/.bin/pi}"
 
-setup_gemini() {
-  local profile temp_profile gemini_key
-  profile="$ROOT/config/profile.env"
-
-  [[ -t 0 && -t 1 ]] || {
-    echo "epos-agent: --setup-gemini requires an interactive terminal" >&2
-    exit 1
-  }
-
-  mkdir -p "$ROOT/config"
-  printf 'Create a Gemini API key in Google AI Studio:\nhttps://aistudio.google.com/app/apikey\n\n'
-  printf 'Paste the key (it will not be displayed): '
-  IFS= read -r -s gemini_key
-  printf '\n'
-  [[ -n "$gemini_key" ]] || {
-    echo "epos-agent: no Gemini API key was provided" >&2
-    exit 1
-  }
-
-  temp_profile="$(mktemp "$ROOT/config/profile.env.XXXXXX")"/
-  if [[ -f "$profile" ]]; then
-    awk '!/^(GEMINI_API_KEY|EPOS_PROVIDER|EPOS_MODEL)=/' "$profile" > "$temp_profile"
-  fi
-  printf 'GEMINI_API_KEY=%q\nEPOS_PROVIDER=google\n' "$gemini_key" >> "$temp_profile"
-  chmod 600 "$temp_profile"
-  mv "$temp_profile" "$profile"
-  unset gemini_key
-
-  printf 'Gemini is configured for EPOS Agent. Start it normally, then use /model to choose a Gemini model.\n'
+# Resolve ROOT from the script's real location so the symlink in /usr/local/bin
+# (or ~/.local/bin) automatically finds the correct repo directory, regardless
+# of where the user cloned it.
+_resolve_root() {
+  local script="$1"
+  # Follow symlinks portably (macOS lacks `readlink -f` before Sonoma)
+  local target="$script"
+  while [[ -L "$target" ]]; do
+    local link_dir
+    link_dir="$(cd "$(dirname "$target")" && pwd)"
+    target="$(readlink "$target")"
+    [[ "$target" == /* ]] || target="$link_dir/$target"
+  done
+  cd "$(dirname "$target")/.." && pwd
 }
-
-if [[ "${1:-}" == "--setup-gemini" ]]; then
-  setup_gemini
-  exit 0
-fi
+ROOT="${EPOS_AGENT_ROOT:-$(_resolve_root "${BASH_SOURCE[0]}")}"
+PI_BIN="${PI_BIN:-$ROOT/.runtime/node_modules/.bin/pi}"
 
 if [[ ! -x "$PI_BIN" ]]; then
   PI_BIN="$(command -v pi || true)"
@@ -46,6 +26,7 @@ if [[ -z "${PI_BIN:-}" || ! -x "$PI_BIN" ]]; then
   echo "epos-agent: cannot find executable pi runtime" >&2
   exit 127
 fi
+
 mkdir -p "$ROOT"/{cache,sessions,logs,logs/provenance,config/pi-agent}
 node -e '
   const fs = require("fs");
@@ -54,6 +35,7 @@ node -e '
   settings.quietStartup = true;
   fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
 ' "$ROOT/config/pi-agent/settings.json"
+
 if [[ -f "$ROOT/config/profile.env" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/config/profile.env"

@@ -211,10 +211,28 @@ function Install-Application([object]$Python) {
     Copy-Item -LiteralPath (Join-Path $InstallRoot "config/profile.env.example") -Destination $profile
   }
   Set-Content -LiteralPath (Join-Path $InstallRoot ".epos-agent-installation") -Value "EPOS_AGENT_ROOT=$InstallRoot" -Encoding ASCII
+
+  # ── Make epos-agent available globally ─────────────────────────────────────
+  $binDir = Join-Path $InstallRoot "bin"
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  if ($userPath -notlike "*$binDir*") {
+    [Environment]::SetEnvironmentVariable("Path", "$userPath;$binDir", "User")
+    $env:Path = "$env:Path;$binDir"
+    Write-Status "Added $binDir to your user PATH."
+    Write-Status "Open a new PowerShell window for the change to take effect."
+  }
 }
 
 Write-Status "Preparing native Windows installation in $InstallRoot"
 $python = Ensure-Prerequisites
 Get-Repository
 Install-Application $python
-Write-Status "Installation completed. Start EPOS Agent by running: ~\epos-agent\bin\epos-agent.ps1"
+
+Write-Host ""
+Write-Status "Installation completed."
+Write-Host "[EPOS]"
+Write-Host "[EPOS]  To configure your provider/API key, edit config/profile.env"
+Write-Host "[EPOS]"
+Write-Host "[EPOS]  To start EPOS Agent, open a new PowerShell window and run:"
+Write-Host "[EPOS]    epos-agent"
+Write-Host "[EPOS]"
