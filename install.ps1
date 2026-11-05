@@ -177,6 +177,23 @@ function Install-Application([object]$Python) {
   & npm install --prefix $runtime --no-fund --no-audit "@earendil-works/pi-coding-agent@latest"
   if ($LASTEXITCODE -ne 0) { Stop-Install "Could not install pi coding agent." }
 
+  # Add Pi provider documentation pointer when doing /login
+  $interactivePath = Join-Path $runtime "node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js"
+  if (Test-Path -LiteralPath $interactivePath) {
+    & node -e '
+      const fs = require("fs");
+      const p = process.argv[1];
+      if (!fs.existsSync(p)) process.exit(0);
+      let code = fs.readFileSync(p, "utf8");
+      const target = "async handleLoginCommand(providerRef) {";
+      const replacement = "async handleLoginCommand(providerRef) {\n        this.showStatus(`Pi documentation: ${path.join(getDocsPath(), \"providers.md\")}`);";
+      if (code.includes(target) && !code.includes("Pi documentation:")) {
+        code = code.replace(target, replacement);
+        fs.writeFileSync(p, code);
+      }
+    ' $interactivePath
+  }
+
   $environments = @(
     @{ Name = "EPOS MCP"; Path = "services/mcp-epos/.venv"; Requirements = "services/mcp-epos/requirements.txt" },
     @{ Name = "FDSN MCP"; Path = "services/mcp-fdsnws-event/.venv"; Requirements = $null; Package = "services/mcp-fdsnws-event" },

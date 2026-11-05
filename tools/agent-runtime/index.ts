@@ -1932,6 +1932,22 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.notify([`Workspace: ${bundle}`, `Open: ${openCommand}`, recent.length ? `Recent files:\n${recent.join("\n")}` : "No recorded artifacts in this study."].join("\n"), "info");
     },
   });
+  pi.registerCommand("docs", {
+    description: "Show paths to Pi and provider documentation",
+    handler: async (_args, ctx) => {
+      const docsDir = join(ROOT, ".runtime", "node_modules", "@earendil-works", "pi-coding-agent", "docs");
+      ctx.ui.notify(
+        [
+          "Pi Documentation:",
+          `• Providers & API Keys: file://${join(docsDir, "providers.md")}`,
+          `• Supported Models:     file://${join(docsDir, "models.md")}`,
+          `• Configuration:        file://${join(docsDir, "configuration.md")}`,
+          `• Online Docs:          https://github.com/earendil-works/pi`,
+        ].join("\n"),
+        "info"
+      );
+    },
+  });
   pi.registerCommand("epos-state", {
     description: "Show or reset the current EPOS workflow state",
     handler: async (args, ctx) => {

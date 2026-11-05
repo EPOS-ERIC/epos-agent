@@ -124,6 +124,20 @@ say "Installing pi coding agent locally"
 mkdir -p "$INSTALL_ROOT/.runtime"
 npm install --prefix "$INSTALL_ROOT/.runtime" --no-fund --no-audit "$PI_PACKAGE@latest"
 
+# Add Pi provider documentation pointer when doing /login
+node -e '
+  const fs = require("fs");
+  const p = process.argv[1];
+  if (!fs.existsSync(p)) process.exit(0);
+  let code = fs.readFileSync(p, "utf8");
+  const target = "async handleLoginCommand(providerRef) {";
+  const replacement = "async handleLoginCommand(providerRef) {\n        this.showStatus(`Pi documentation: ${path.join(getDocsPath(), \"providers.md\")}`);";
+  if (code.includes(target) && !code.includes("Pi documentation:")) {
+    code = code.replace(target, replacement);
+    fs.writeFileSync(p, code);
+  }
+' "$INSTALL_ROOT/.runtime/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js"
+
 say "Creating Python environment for EPOS MCP"
 make_venv "$INSTALL_ROOT/services/mcp-epos/.venv"
 "$INSTALL_ROOT/services/mcp-epos/.venv/bin/python" -m pip install --upgrade pip >/dev/null
