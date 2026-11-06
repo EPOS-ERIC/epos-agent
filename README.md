@@ -20,7 +20,7 @@ cd epos-agent
 ```powershell
 .\install.ps1
 ```
-*The installer requires PowerShell 5.1 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer).*
+*The installer requires PowerShell 5.7 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer).*
 
 3. **Start the agent:**
 Open a new PowerShell window and run:
