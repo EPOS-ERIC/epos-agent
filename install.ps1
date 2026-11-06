@@ -8,7 +8,7 @@ if ($PSVersionTable.PSVersion -lt [version]"5.1") {
   throw "[EPOS] ERROR: PowerShell 5.1 or newer is required."
 }
 
-$RepositoryUrl = "https://github.com/danielebailo/epos-agent.git"
+$RepositoryUrl = "https://github.com/EPOS-ERIC/epos-agent.git"
 $RepositoryBranch = "main"
 $InstallRoot = if ($env:EPOS_INSTALL_ROOT) {
   [System.IO.Path]::GetFullPath($env:EPOS_INSTALL_ROOT)
