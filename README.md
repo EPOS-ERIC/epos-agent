@@ -20,13 +20,16 @@ cd epos-agent
 ```powershell
 .\install.ps1
 ```
-*The installer requires PowerShell 5.1 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer). It installs or updates Git, Node.js and Python when needed, creates its local runtimes under `%USERPROFILE%\epos-agent`, and adds the `bin\` folder to your user PATH so you can run `epos-agent` from any directory.*
+*The installer requires PowerShell 5.1 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer).*
 
 3. **Start the agent:**
 Open a new PowerShell window and run:
 ```powershell
 epos-agent
 ```
+
+4. **Log in to your AI provider:**
+Inside the Pi harness, run `/login` and follow the prompts. You don't need to configure a file to log in.
 
 *(To use a different installation directory, set `$env:EPOS_INSTALL_ROOT = "C:\EPOS Agent"` before running `.\install.ps1`. Existing installations are updated automatically preserving your configuration and workspace data.)*
 
@@ -46,21 +49,28 @@ cd epos-agent
 ```bash
 ./install.sh
 ```
-*The installer works in-place: it installs `pi coding agent`, the Python environments and all runtime data directly inside the cloned folder — no second directory is created. It also creates a global `epos-agent` symlink so you can launch it from anywhere.*
+*The installer works in-place: it installs `pi coding agent`, the Python environments and all runtime data directly inside the cloned folder. It also creates a global `epos-agent` symlink so you can launch it from anywhere. During Installation you will be asked you computer password.*
 
-3. **Configure your provider and API key:**
-Edit `config/profile.env` (created from `config/profile.env.example`) and set your API key and provider (Google Gemini, Anthropic Claude, or OpenAI).
-
-4. **Start the agent:**
+3. **Start the agent:**
 ```bash
 epos-agent
 ```
+
+4. **Log in to your AI provider:**
+Inside the Pi harness, run `/login` and follow the prompts. You don't need to configure a file to log in.
 
 *(To install into a different directory, run `EPOS_INSTALL_ROOT=/other/path ./install.sh` from the repo. `EPOS_AGENT_ROOT` is not needed: the launcher always finds its root by following the symlink back to the repo.)*
 
 ## Configuration
 
-Configure your provider credentials in `config/profile.env`. A template is available at `config/profile.env.example` with ready-to-use settings for Google Gemini, Anthropic Claude and OpenAI:
+Run `/login` inside the Pi harness and select your provider. Depending on the provider, you can choose:
+
+- **Browser login:** Sign in to your provider account and authorize Pi through a browser or device flow. This may connect an eligible subscription.
+- **API key:** Create an API key with your provider and enter it when prompted. API usage and billing are managed by the provider.
+
+Available login methods and billing depend on the provider. Pi saves the resulting credential locally, so you don't need to edit a configuration file.
+
+Alternatively, configure your provider credentials in `config/profile.env`. A template is available at `config/profile.env.example` with ready-to-use settings for Google Gemini, Anthropic Claude and OpenAI:
 
 - **Google Gemini**: set `GEMINI_API_KEY`, `EPOS_PROVIDER=google`, `EPOS_MODEL=gemini-2.5-pro` (and optionally `EPOS_THINKING=medium`)
 - **Anthropic Claude**: set `ANTHROPIC_API_KEY`, `EPOS_PROVIDER=anthropic`, `EPOS_MODEL=claude-sonnet-4-5`
