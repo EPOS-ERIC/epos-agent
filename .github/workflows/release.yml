@@ -1,0 +1,70 @@
+name: Installer checks and release
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  checks:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Updater tests
+        shell: bash
+        run: node --test tools/updater/tests/*.test.cjs
+      - name: Bash syntax
+        if: runner.os != 'Windows'
+        run: bash -n install.sh bin/epos-agent
+      - name: Windows PowerShell 5.1 installer tests
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tools/updater/tests/windows.ps1
+      - name: PowerShell 7 installer tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/updater/tests/windows.ps1
+      - name: Real installation and launcher smoke test
+        if: runner.os != 'Linux'
+        shell: bash
+        env:
+          EPOS_AUTO_INSTALL: '1'
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./install.ps1
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./bin/epos-agent.ps1 --version
+          else
+            bash ./install.sh
+            bash ./bin/epos-agent --version
+          fi
+          node tools/updater/tests/smoke.cjs
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: node tools/updater/package.cjs
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes

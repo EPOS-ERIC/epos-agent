@@ -8,58 +8,88 @@ EPOS Agent is a model-agnostic terminal assistant for discovering and using EPOS
 
 ## Quick start (Windows)
 
-On Windows 10 or 11, open PowerShell and follow these steps to clone, install and start the agent:
+On Windows 10 or 11, download the `epos-agent-vX.Y.Z.zip` asset from the [latest stable release](https://github.com/EPOS-ERIC/epos-agent/releases/latest) and extract it into your installation folder, for example `C:\Users\your-name\epos-agent`. Use the EPOS ZIP asset rather than GitHub's automatic “Source code” download.
 
-1. **Clone the repository:**
+Open **Windows PowerShell 5.1 or PowerShell 7**, enter that folder and run:
+
 ```powershell
-git clone https://github.com/EPOS-ERIC/epos-agent.git
-cd epos-agent
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-2. **Run the installation:**
-```powershell
-.\install.ps1
-```
-*The installer requires PowerShell 5.7 or newer, an Internet connection and [winget](https://learn.microsoft.com/windows/package-manager/winget/) (included with Microsoft's App Installer).*
+The installer reuses compatible Node.js (**22.19.0 or newer**), npm and Python (**3.11 or newer**). It uses `winget` to install or upgrade missing prerequisites. If `winget` is unavailable, install [Microsoft App Installer](https://aka.ms/getwinget), or install the missing prerequisites manually using [Node.js](https://nodejs.org/en/download) and [Python](https://www.python.org/downloads/windows/), then rerun the installer. Git and PowerShell 7 are not required.
 
-3. **Start the agent:**
-Open a new PowerShell window and run:
-```powershell
-epos-agent
-```
+Open a new PowerShell window and run `epos-agent`. Inside the agent, use `/login` to connect your AI provider.
 
-4. **Log in to your AI provider:**
-Inside the Pi harness, run `/login` and follow the prompts. You don't need to configure a file to log in.
-
-*(To use a different installation directory, set `$env:EPOS_INSTALL_ROOT = "C:\EPOS Agent"` before running `.\install.ps1`. Existing installations are updated automatically preserving your configuration and workspace data.)*
+To install into a different **empty** directory, set `$env:EPOS_INSTALL_ROOT = "C:\EPOS Agent"` before running the installer. Otherwise, installation takes place in the extracted folder. Rerunning that folder's installer preserves configuration and workspace data.
 
 ## Quick start (macOS/Linux)
 
-The installer checks for Node.js (**22.19.0 or newer**), Python (**3.11 or newer**), Git and npm. If dependencies are missing, `install.sh` asks for permission and installs them using Homebrew (macOS) or your native package manager (Linux). For unattended installation, use `EPOS_AUTO_INSTALL=1`.
+On macOS, download and extract the `epos-agent-vX.Y.Z.zip` asset from the [latest stable release](https://github.com/EPOS-ERIC/epos-agent/releases/latest). Enter the extracted folder and run:
 
-Open your terminal and follow these steps:
+```bash
+bash ./install.sh
+```
 
-1. **Clone the repository:**
+The installer reuses compatible Node.js (**22.19.0 or newer**), npm and Python (**3.11 or newer**). When necessary, it asks permission to install prerequisites through Homebrew. Use `EPOS_AUTO_INSTALL=1` for unattended prerequisite installation. Creating the global launcher can request your computer password.
+
+Run `epos-agent` in a new terminal, then use `/login` inside the agent. To install into a different empty directory, run `EPOS_INSTALL_ROOT=/other/path bash ./install.sh`.
+
+Linux retains its existing installation through the native package manager; the release updater currently supports Windows and macOS only. Installation from a Git clone remains available:
+
 ```bash
 git clone https://github.com/EPOS-ERIC/epos-agent.git
 cd epos-agent
+bash ./install.sh
 ```
 
-2. **Run the installation:**
+## Updates (Windows and macOS)
+
+At interactive startup, EPOS checks GitHub for a newer stable release and asks whether to install it. Answering no, running without an interactive terminal, or an unavailable update check allows normal startup. The check has a five-second timeout. Set `EPOS_SKIP_UPDATE_CHECK=1` to disable it.
+
+```text
+epos-agent --version
+epos-agent update --check
+epos-agent update
+```
+
+Close other EPOS sessions before updating. Updates use release packages and do not run `git pull`. They preserve provider credentials, configuration, workspace, sessions, cache, logs and downloaded MCP artifacts. Local changes to distributed source files block updates rather than being overwritten. A failure during installation restores the previous code and local dependency environments; system prerequisite upgrades performed by Homebrew or winget are not rolled back.
+
+An interrupted process or power loss can leave a recovery backup and block further starts. After ensuring no installer/updater or EPOS session is running, restore it with:
+
+```text
+epos-agent recover-update
+```
+
+If startup itself is damaged, run `node tools/updater/update.cjs recover .` from the installation folder. Do not delete the recovery backup or lock while an update is running. Updating requires temporary disk space for the downloaded package and a backup of the installed dependency environments.
+
+### Existing Git installations
+
+Install the updater once, with EPOS sessions closed:
+
 ```bash
-./install.sh
+git pull --ff-only
 ```
-*The installer works in-place: it installs `pi coding agent`, the Python environments and all runtime data directly inside the cloned folder. It also creates a global `epos-agent` symlink so you can launch it from anywhere. During Installation you will be asked you computer password.*
 
-3. **Start the agent:**
+Then run `bash ./install.sh` on macOS or `.\install.ps1` on Windows. Subsequent updates use `epos-agent update` or the startup prompt. Once a clone is managed through release updates, use the updater for it; keep a separate checkout for development rather than alternating release updates and Git changes.
+
+### Publishing a version
+
+Set `VERSION` to a stable `X.Y.Z`, commit the changes, then create and push its matching tag:
+
 ```bash
-epos-agent
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
-4. **Log in to your AI provider:**
-Inside the Pi harness, run `/login` and follow the prompts. You don't need to configure a file to log in.
+The release workflow checks Windows PowerShell 5.1, PowerShell 7, macOS and updater behavior before publishing the ZIP, updater bundle and SHA-256 checksums. Tag and `VERSION` must match. Changing only `VERSION`, publishing a draft or publishing a prerelease does not distribute a stable update. GitHub Actions needs permission to create repository releases. The first release must be published before the release download links become usable.
 
-*(To install into a different directory, run `EPOS_INSTALL_ROOT=/other/path ./install.sh` from the repo. `EPOS_AGENT_ROOT` is not needed: the launcher always finds its root by following the symlink back to the repo.)*
+Run the offline updater tests with:
+
+```bash
+node --test tools/updater/tests/*.test.cjs
+```
+
+On Windows, run `./tools/updater/tests/windows.ps1` in both PowerShell 5.1 and 7. Full installation/update smoke tests run in CI using real dependencies; they require internet access.
 
 ## Configuration
 

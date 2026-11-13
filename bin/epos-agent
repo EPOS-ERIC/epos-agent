@@ -17,6 +17,25 @@ _resolve_root() {
   cd "$(dirname "$target")/.." && pwd
 }
 ROOT="${EPOS_AGENT_ROOT:-$(_resolve_root "${BASH_SOURCE[0]}")}"
+if [[ "${1:-}" == "--version" ]]; then cat "$ROOT/VERSION"; exit 0; fi
+if [[ "${1:-}" == "update" ]]; then
+  shift
+  exec node "$ROOT/tools/updater/update.cjs" update "$ROOT" "$@"
+fi
+if [[ "${1:-}" == "recover-update" ]]; then
+  exec node "$ROOT/tools/updater/update.cjs" recover "$ROOT"
+fi
+update_status=0
+node "$ROOT/tools/updater/update.cjs" startup "$ROOT" || update_status=$?
+if (( update_status == 10 )); then
+  export EPOS_SKIP_UPDATE_CHECK=1
+  exec "$ROOT/bin/epos-agent" "$@"
+fi
+if (( update_status != 0 )); then exit "$update_status"; fi
+EPOS_VERSION="$(cat "$ROOT/VERSION")"
+node "$ROOT/tools/updater/update.cjs" session "$ROOT" "$$"
+trap 'node "$ROOT/tools/updater/update.cjs" session "$ROOT" "$$" end' EXIT
+
 PI_BIN="${PI_BIN:-$ROOT/.runtime/node_modules/.bin/pi}"
 
 if [[ ! -x "$PI_BIN" ]]; then
@@ -92,7 +111,7 @@ ${EPOS_GREEN}║${EPOS_RESET}                                                   
   done < "$agent_art"
   printf '%s\n' "${EPOS_GREEN}║${EPOS_RESET}                         ${EPOS_GOLD}EUROPEAN PLATE OBSERVING SYSTEM${EPOS_RESET}                          ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                     ${EPOS_GOLD}────────────────────────────────────────${EPOS_RESET}                     ${EPOS_GREEN}║${EPOS_RESET}
-${EPOS_GREEN}║${EPOS_RESET}                               ${EPOS_WHITE}EPOS Agent · ${EPOS_RESET}${EPOS_GOLD}V1.0.3${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
+${EPOS_GREEN}║${EPOS_RESET}                               ${EPOS_WHITE}EPOS Agent · ${EPOS_RESET}${EPOS_GOLD}V${EPOS_VERSION}${EPOS_RESET}                                ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}          ${EPOS_WHITE}Solid Earth data services, metadata, provenance and discovery${EPOS_RESET}           ${EPOS_GREEN}║${EPOS_RESET}
 ${EPOS_GREEN}║${EPOS_RESET}                                                                                  ${EPOS_GREEN}║${EPOS_RESET}
@@ -105,7 +124,7 @@ else
     cat "$agent_art"
     printf '\n'
   fi
-  printf '%s\n' "${EPOS_WHITE}EPOS${EPOS_RESET}" "Agent" "V1.0.3"
+  printf '%s\n' "${EPOS_WHITE}EPOS${EPOS_RESET}" "Agent" "V${EPOS_VERSION}"
 fi
 
 declare -a args=(
@@ -130,4 +149,4 @@ export PI_CODING_AGENT_DIR="$ROOT/config/pi-agent"
 export PI_CODING_AGENT_SESSION_DIR="$ROOT/sessions"
 export PI_SKIP_VERSION_CHECK=1
 export XDG_CACHE_HOME="$ROOT/cache/xdg"
-exec "$PI_BIN" "${args[@]}" "$@"
+"$PI_BIN" "${args[@]}" "$@"

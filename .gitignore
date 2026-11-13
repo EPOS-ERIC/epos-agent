@@ -26,3 +26,12 @@ config/profile.env
 .DS_Store
 .vscode/
 .idea/
+
+# Release updater state
+.epos-update.json
+.epos-update-lock/
+.epos-update-recovery.json
+.epos-sessions/
+dist/
+.epos-update.json.tmp
+.epos-update-recovery.json.tmp

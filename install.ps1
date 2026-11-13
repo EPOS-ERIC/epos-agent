@@ -1,5 +1,5 @@
-[CmdletBinding()]
-param()
+﻿[CmdletBinding()]
+param([switch]$UpdateDependenciesOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -8,12 +8,10 @@ if ($PSVersionTable.PSVersion -lt [version]"5.1") {
   throw "[EPOS] ERROR: PowerShell 5.1 or newer is required."
 }
 
-$RepositoryUrl = "https://github.com/EPOS-ERIC/epos-agent.git"
-$RepositoryBranch = "main"
 $InstallRoot = if ($env:EPOS_INSTALL_ROOT) {
   [System.IO.Path]::GetFullPath($env:EPOS_INSTALL_ROOT)
 } else {
-  Join-Path $env:USERPROFILE "epos-agent"
+  $PSScriptRoot
 }
 
 function Write-Status([string]$Message) {
@@ -39,19 +37,21 @@ function Get-CommandPath([string]$Name) {
 function Invoke-Winget([string[]]$Arguments) {
   $winget = Get-CommandPath "winget"
   if (-not $winget) {
-    Stop-Install "winget is required. Install Microsoft's App Installer, then re-run this command."
+    Stop-Install "Missing prerequisite: $($Arguments[2]). Install Microsoft App Installer (https://aka.ms/getwinget), or install Node.js >= 22.19.0 and Python >= 3.11 manually, then re-run."
   }
-  & $winget @Arguments
-  if ($LASTEXITCODE -ne 0) {
-    Stop-Install "winget failed while running: winget $($Arguments -join ' ')"
+  & $winget @Arguments | Out-Host
+  $code = $LASTEXITCODE
+  # No applicable upgrade is acceptable only if the subsequent version check passes.
+  if ($code -notin @(0, -1978335189, -1978335135)) {
+    Stop-Install "winget exited with code ${code}: winget $($Arguments -join ' ')"
   }
   Refresh-CommandPath
 }
 
-function Install-WingetPackage([string]$Id, [bool]$Force = $false) {
+function Install-WingetPackage([string]$Id, [bool]$Upgrade = $false) {
   Write-Status "Installing $Id"
   $arguments = @("install", "--id", $Id, "--exact", "--source", "winget", "--silent", "--accept-package-agreements", "--accept-source-agreements")
-  if ($Force) { $arguments += "--force" }
+  if ($Upgrade) { $arguments[0] = "upgrade" }
   Invoke-Winget -Arguments $arguments
 }
 
@@ -66,39 +66,40 @@ function Get-NodeVersion {
 }
 
 function Get-PythonCommand {
-  $pythonLauncher = Get-CommandPath "py"
-  if ($pythonLauncher) {
-    $output = & $pythonLauncher -3 -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null
-    $version = ($output -join "").Trim()
-    if ($LASTEXITCODE -eq 0) {
-      try {
-        return [PSCustomObject]@{ Path = $pythonLauncher; Arguments = @("-3"); Version = [version]$version }
-      } catch {}
+  # Missing launcher versions are expected probe failures, including on PowerShell 5.1.
+  $ErrorActionPreference = "Continue"
+  $candidates = @()
+  $launcher = Get-CommandPath "py.exe"
+  if ($launcher) {
+    foreach ($minor in 14, 13, 12, 11) {
+      $candidates += [PSCustomObject]@{ Path = $launcher; Arguments = @("-3.$minor") }
+    }
+    $candidates += [PSCustomObject]@{ Path = $launcher; Arguments = @("-3") }
+  }
+  foreach ($name in @("python.exe", "python3.exe")) {
+    foreach ($command in @(Get-Command $name -All -ErrorAction SilentlyContinue)) {
+      if ($command.Source -and $command.Source -notlike "*\Microsoft\WindowsApps\*") {
+        $candidates += [PSCustomObject]@{ Path = $command.Source; Arguments = @() }
+      }
     }
   }
-
-  $python = Get-CommandPath "python"
-  if ($python) {
-    $output = & $python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))" 2>$null
-    $version = ($output -join "").Trim()
-    if ($LASTEXITCODE -eq 0) {
-      try {
-        return [PSCustomObject]@{ Path = $python; Arguments = @(); Version = [version]$version }
-      } catch {}
+  foreach ($base in @((Join-Path $env:LOCALAPPDATA "Programs/Python"), $env:ProgramFiles)) {
+    foreach ($executable in @(Get-ChildItem -Path (Join-Path $base "Python*/python.exe") -ErrorAction SilentlyContinue)) {
+      $candidates += [PSCustomObject]@{ Path = $executable.FullName; Arguments = @() }
+    }
+  }
+  foreach ($candidate in $candidates) {
+    $versionText = & $candidate.Path @($candidate.Arguments + @("-c", "import sys; print('.'.join(map(str, sys.version_info[:3])))")) 2>$null
+    if ($LASTEXITCODE -ne 0) { continue }
+    $version = $null
+    if ([version]::TryParse(($versionText -join "").Trim(), [ref]$version) -and $version -ge [version]"3.11") {
+      return [PSCustomObject]@{ Path = $candidate.Path; Arguments = $candidate.Arguments; Version = $version }
     }
   }
   return $null
 }
 
 function Ensure-Prerequisites {
-  if (-not (Get-CommandPath "winget")) {
-    Stop-Install "winget is required. Install Microsoft's App Installer, then re-run this command."
-  }
-
-  if (-not (Get-CommandPath "git")) {
-    Install-WingetPackage "Git.Git"
-  }
-
   $nodeVersion = Get-NodeVersion
   if (-not $nodeVersion) {
     Install-WingetPackage "OpenJS.NodeJS.LTS"
@@ -106,7 +107,7 @@ function Ensure-Prerequisites {
     Install-WingetPackage "OpenJS.NodeJS.LTS" $true
   }
 
-  if (-not (Get-CommandPath "npm")) {
+  if (-not (Get-CommandPath "npm.cmd")) {
     Stop-Install "npm is required after installing Node.js. Open a new PowerShell window and re-run this command."
   }
   $nodeVersion = Get-NodeVersion
@@ -117,52 +118,12 @@ function Ensure-Prerequisites {
   $python = Get-PythonCommand
   if (-not $python) {
     Install-WingetPackage "Python.Python.3.13"
-  } elseif ($python.Version -lt [version]"3.11") {
-    Install-WingetPackage "Python.Python.3.13" $true
   }
   $python = Get-PythonCommand
   if (-not $python -or $python.Version -lt [version]"3.11") {
     Stop-Install "Python >= 3.11 is required. Open a new PowerShell window after the upgrade and re-run this command."
   }
   return $python
-}
-
-function Test-OfficialInstallation([string]$Path) {
-  if (-not (Test-Path -LiteralPath (Join-Path $Path ".git"))) { return $false }
-  $originOutput = & git -C $Path remote get-url origin 2>$null
-  if ($LASTEXITCODE -ne 0) { return $false }
-  $origin = ($originOutput -join "").Trim()
-  if ($origin -ne $RepositoryUrl) { return $false }
-  $branchOutput = & git -C $Path branch --show-current 2>$null
-  if ($LASTEXITCODE -ne 0) { return $false }
-  $branch = ($branchOutput -join "").Trim()
-  return $LASTEXITCODE -eq 0 -and $branch -eq $RepositoryBranch
-}
-
-function Get-Repository {
-  if (Test-Path -LiteralPath $InstallRoot) {
-    $entries = @(Get-ChildItem -LiteralPath $InstallRoot -Force)
-    if ($entries.Count -gt 0 -and -not (Test-OfficialInstallation $InstallRoot)) {
-      Stop-Install "$InstallRoot is not a clean EPOS Agent clone from $RepositoryUrl. Choose another EPOS_INSTALL_ROOT."
-    } elseif ($entries.Count -gt 0) {
-      $changes = (& git -C $InstallRoot status --porcelain --untracked-files=no 2>$null)
-      if ($LASTEXITCODE -ne 0 -or $changes) {
-        Stop-Install "$InstallRoot has tracked changes. Commit or discard them before updating."
-      }
-      Write-Status "Updating EPOS Agent in $InstallRoot"
-      & git -C $InstallRoot pull --ff-only origin $RepositoryBranch
-      if ($LASTEXITCODE -ne 0) { Stop-Install "Could not update the existing EPOS Agent installation." }
-      return
-    }
-  }
-
-  $parent = Split-Path -Parent $InstallRoot
-  if (-not (Test-Path -LiteralPath $parent)) {
-    New-Item -ItemType Directory -Force -Path $parent | Out-Null
-  }
-  Write-Status "Cloning EPOS Agent into $InstallRoot"
-  & git clone --depth 1 --branch $RepositoryBranch $RepositoryUrl $InstallRoot
-  if ($LASTEXITCODE -ne 0) { Stop-Install "Could not clone EPOS Agent." }
 }
 
 function Invoke-Python([object]$Python, [string[]]$Arguments) {
@@ -174,25 +135,11 @@ function Install-Application([object]$Python) {
   $runtime = Join-Path $InstallRoot ".runtime"
   Write-Status "Installing pi coding agent locally"
   New-Item -ItemType Directory -Force -Path $runtime | Out-Null
-  & npm install --prefix $runtime --no-fund --no-audit "@earendil-works/pi-coding-agent@latest"
+  & npm.cmd install --prefix $runtime --no-fund --no-audit "@earendil-works/pi-coding-agent@latest"
   if ($LASTEXITCODE -ne 0) { Stop-Install "Could not install pi coding agent." }
 
-  # Add Pi provider documentation pointer when doing /login
-  $interactivePath = Join-Path $runtime "node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js"
-  if (Test-Path -LiteralPath $interactivePath) {
-    & node -e '
-      const fs = require("fs");
-      const p = process.argv[1];
-      if (!fs.existsSync(p)) process.exit(0);
-      let code = fs.readFileSync(p, "utf8");
-      const target = "async handleLoginCommand(providerRef) {";
-      const replacement = "async handleLoginCommand(providerRef) {\n        this.showStatus(`Pi documentation: ${path.join(getDocsPath(), \"providers.md\")}`);";
-      if (code.includes(target) && !code.includes("Pi documentation:")) {
-        code = code.replace(target, replacement);
-        fs.writeFileSync(p, code);
-      }
-    ' $interactivePath
-  }
+  & node (Join-Path $InstallRoot "tools/updater/update.cjs") patch-pi $InstallRoot
+  if ($LASTEXITCODE -ne 0) { Stop-Install "Could not configure pi coding agent." }
 
   $environments = @(
     @{ Name = "EPOS MCP"; Path = "services/mcp-epos/.venv"; Requirements = "services/mcp-epos/requirements.txt" },
@@ -202,9 +149,17 @@ function Install-Application([object]$Python) {
   foreach ($environment in $environments) {
     $environmentPath = Join-Path $InstallRoot $environment.Path
     $venvPython = Join-Path $environmentPath "Scripts/python.exe"
-    if (-not (Test-Path -LiteralPath $venvPython)) {
+    $validEnvironment = $false
+    if (Test-Path -LiteralPath $venvPython) {
+      $validEnvironment = & {
+        $ErrorActionPreference = "Continue"
+        & $venvPython -c "import sys; assert sys.version_info >= (3, 11)" 2>$null
+        $LASTEXITCODE -eq 0
+      }
+    }
+    if (-not $validEnvironment) {
       Write-Status "Creating Python environment for $($environment.Name)"
-      Invoke-Python $Python @("-m", "venv", $environmentPath)
+      Invoke-Python $Python @("-m", "venv", "--clear", $environmentPath)
     }
     & $venvPython -m pip install --upgrade pip
     if ($LASTEXITCODE -ne 0) { Stop-Install "Could not upgrade pip for $($environment.Name)." }
@@ -229,10 +184,12 @@ function Install-Application([object]$Python) {
   }
   Set-Content -LiteralPath (Join-Path $InstallRoot ".epos-agent-installation") -Value "EPOS_AGENT_ROOT=$InstallRoot" -Encoding ASCII
 
+  if ($UpdateDependenciesOnly) { return }
+
   # ── Make epos-agent available globally ─────────────────────────────────────
   $binDir = Join-Path $InstallRoot "bin"
   $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-  if ($userPath -notlike "*$binDir*") {
+  if (@($userPath -split ";") -notcontains $binDir) {
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$binDir", "User")
     $env:Path = "$env:Path;$binDir"
     Write-Status "Added $binDir to your user PATH."
@@ -242,8 +199,15 @@ function Install-Application([object]$Python) {
 
 Write-Status "Preparing native Windows installation in $InstallRoot"
 $python = Ensure-Prerequisites
-Get-Repository
+if ([System.IO.Path]::GetFullPath($PSScriptRoot) -ne $InstallRoot) {
+  & node (Join-Path $PSScriptRoot "tools/updater/update.cjs") copy $PSScriptRoot $InstallRoot
+  if ($LASTEXITCODE -ne 0) { Stop-Install "Could not prepare installation directory." }
+}
 Install-Application $python
+if (-not $UpdateDependenciesOnly) {
+  & node (Join-Path $InstallRoot "tools/updater/update.cjs") init $InstallRoot
+  if ($LASTEXITCODE -ne 0) { Stop-Install "Could not initialize update metadata." }
+}
 
 Write-Host ""
 Write-Status "Installation completed."

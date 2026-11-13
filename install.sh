@@ -20,10 +20,15 @@ confirm_install() {
   [[ -z "$answer" || "$answer" =~ ^[Yy]([Ee][Ss])?$ ]] || fail "Dependency installation declined."
 }
 
+node_is_supported() {
+  command -v node >/dev/null 2>&1 && node -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22 || (a===22 && b>=19) ? 0 : 1)' >/dev/null 2>&1
+}
+
 install_dependencies() {
   local os packages=()
   os="$(uname -s)"
   if [[ "$os" == "Darwin" ]]; then
+    if node_is_supported && command -v npm >/dev/null 2>&1 && find_python >/dev/null 2>&1; then return; fi
     if ! command -v brew >/dev/null 2>&1; then
       confirm_install
       say "Installing Homebrew (required to install Node.js and Python)"
@@ -33,18 +38,13 @@ install_dependencies() {
       hash -r 2>/dev/null || true
     fi
     command -v brew >/dev/null 2>&1 || fail "Homebrew installation failed. Install it from https://brew.sh/ and re-run."
-    command -v node  >/dev/null 2>&1 || packages+=(node)
-    command -v npm   >/dev/null 2>&1 || packages+=(node)
-    command -v python3 >/dev/null 2>&1 || packages+=(python)
-    command -v git   >/dev/null 2>&1 || packages+=(git)
+    if ! node_is_supported || ! command -v npm >/dev/null 2>&1; then packages+=(node); fi
+    find_python >/dev/null 2>&1 || packages+=(python)
     if ((${#packages[@]})); then
       confirm_install
       brew install "${packages[@]}"
-    fi
-    # Homebrew's node is also used when the system Node is too old.
-    if command -v node >/dev/null 2>&1 && (( $(node -p 'Number(process.versions.node.split(".")[0])') < 22 )); then
-      confirm_install
-      brew upgrade node || brew install node
+      if ! node_is_supported; then brew upgrade node; fi
+      if ! find_python >/dev/null 2>&1; then brew upgrade python; fi
     fi
   elif [[ "$os" == "Linux" ]]; then
     if command -v apt-get >/dev/null 2>&1; then
@@ -68,15 +68,6 @@ install_dependencies() {
   hash -r 2>/dev/null || true
 }
 
-install_dependencies
-command -v node >/dev/null 2>&1 || fail "Node.js >= 22.19.0 is required."
-command -v npm  >/dev/null 2>&1 || fail "npm is required."
-command -v git  >/dev/null 2>&1 || fail "Git is required."
-
-node_major="$(node -p 'process.versions.node.split(".")[0]')"
-node_version="$(node -p 'process.versions.node')"
-(( node_major >= 22 )) || fail "Node.js >= 22.19.0 is required (found $node_version). Update Node.js and re-run."
-
 # ── Find the best available Python ───────────────────────────────────────────
 # Prefer Homebrew / system Python over conda-managed Python because conda's
 # Python can fail to create venvs via symlinks on macOS (SIGKILL from SIP).
@@ -85,6 +76,7 @@ find_python() {
     /opt/homebrew/bin/python3   # Homebrew Apple Silicon
     /usr/local/bin/python3      # Homebrew Intel
     /usr/bin/python3            # macOS system (Xcode CLT)
+    python3.14 python3.13 python3.12 python3.11
     python3                     # whatever is on PATH (may be conda)
   )
   for py in "${candidates[@]}"; do
@@ -99,6 +91,13 @@ find_python() {
   done
   return 1
 }
+install_dependencies
+node_is_supported || fail "Node.js >= 22.19.0 is required."
+command -v npm >/dev/null 2>&1 || fail "npm is required."
+if [[ "$INSTALL_ROOT" != "$REPO_ROOT" ]]; then
+  node "$REPO_ROOT/tools/updater/update.cjs" copy "$REPO_ROOT" "$INSTALL_ROOT"
+fi
+
 PYTHON="$(find_python)" || fail "Python >= 3.11 is required. Install it via Homebrew (brew install python) and re-run."
 python_version="$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 say "Using Python $python_version ($PYTHON)"
@@ -107,6 +106,7 @@ say "Using Python $python_version ($PYTHON)"
 # --clear removes any partially-created venv from a previous failed run.
 make_venv() {
   local venv_path="$1"
+  if [[ -x "$venv_path/bin/python" ]] && "$venv_path/bin/python" -c 'import sys; assert sys.version_info >= (3, 11)' 2>/dev/null; then return; fi
   if "$PYTHON" -m venv --clear "$venv_path" 2>/dev/null; then
     return 0
   fi
@@ -124,19 +124,7 @@ say "Installing pi coding agent locally"
 mkdir -p "$INSTALL_ROOT/.runtime"
 npm install --prefix "$INSTALL_ROOT/.runtime" --no-fund --no-audit "$PI_PACKAGE@latest"
 
-# Add Pi provider documentation pointer when doing /login
-node -e '
-  const fs = require("fs");
-  const p = process.argv[1];
-  if (!fs.existsSync(p)) process.exit(0);
-  let code = fs.readFileSync(p, "utf8");
-  const target = "async handleLoginCommand(providerRef) {";
-  const replacement = "async handleLoginCommand(providerRef) {\n        this.showStatus(`Pi documentation: ${path.join(getDocsPath(), \"providers.md\")}`);";
-  if (code.includes(target) && !code.includes("Pi documentation:")) {
-    code = code.replace(target, replacement);
-    fs.writeFileSync(p, code);
-  }
-' "$INSTALL_ROOT/.runtime/node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/interactive-mode.js"
+node "$INSTALL_ROOT/tools/updater/update.cjs" patch-pi "$INSTALL_ROOT"
 
 say "Creating Python environment for EPOS MCP"
 make_venv "$INSTALL_ROOT/services/mcp-epos/.venv"
@@ -158,6 +146,9 @@ if [[ ! -f "$INSTALL_ROOT/config/profile.env" ]]; then
 fi
 printf 'EPOS_AGENT_ROOT=%s\n' "$INSTALL_ROOT" > "$INSTALL_ROOT/.epos-agent-installation"
 chmod +x "$INSTALL_ROOT/bin/epos-agent"
+
+if [[ "${EPOS_UPDATE_IN_PROGRESS:-0}" == "1" ]]; then exit 0; fi
+node "$INSTALL_ROOT/tools/updater/update.cjs" init "$INSTALL_ROOT"
 
 # ── Make epos-agent available globally ────────────────────────────────────────
 SYMLINK_CREATED=0

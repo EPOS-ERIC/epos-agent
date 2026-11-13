@@ -1,5 +1,4 @@
-[CmdletBinding()]
-param()
+﻿param()
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -10,6 +9,26 @@ $Root = if ($env:EPOS_AGENT_ROOT) {
   [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 }
 
+if ($args.Count -gt 0 -and $args[0] -eq "--version") { Get-Content (Join-Path $Root "VERSION"); exit 0 }
+if ($args.Count -gt 0 -and $args[0] -eq "update") {
+  & node (Join-Path $Root "tools/updater/update.cjs") update $Root @($args | Select-Object -Skip 1)
+  exit $LASTEXITCODE
+}
+if ($args.Count -gt 0 -and $args[0] -eq "recover-update") {
+  & node (Join-Path $Root "tools/updater/update.cjs") recover $Root
+  exit $LASTEXITCODE
+}
+& node (Join-Path $Root "tools/updater/update.cjs") startup $Root
+if ($LASTEXITCODE -eq 10) {
+  $env:EPOS_SKIP_UPDATE_CHECK = "1"
+  & (Join-Path $Root "bin/epos-agent.ps1") @args
+  exit $LASTEXITCODE
+}
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$eposVersion = (Get-Content -LiteralPath (Join-Path $Root "VERSION") -Raw).Trim()
+& node (Join-Path $Root "tools/updater/update.cjs") session $Root "$PID"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+try {
 function Stop-Agent([string]$Message) {
   throw "epos-agent: $Message"
 }
@@ -93,7 +112,7 @@ ${green}║${reset}                                                             
   Write-Host @"
 ${green}║${reset}                         ${gold}EUROPEAN PLATE OBSERVING SYSTEM${reset}                          ${green}║${reset}
 ${green}║${reset}                     ${gold}────────────────────────────────────────${reset}                     ${green}║${reset}
-${green}║${reset}                               ${white}EPOS Agent · ${reset}${gold}V1.0.3${reset}                                ${green}║${reset}
+${green}║${reset}                               ${white}EPOS Agent · ${reset}${gold}V${eposVersion}${reset}                                ${green}║${reset}
 ${green}║${reset}                                                                                  ${green}║${reset}
 ${green}║${reset}          ${white}Solid Earth data services, metadata, provenance and discovery${reset}           ${green}║${reset}
 ${green}║${reset}                                                                                  ${green}║${reset}
@@ -106,7 +125,7 @@ ${green}╚═══════════════════════
     Get-Content -LiteralPath $agentArt -Encoding UTF8 | ForEach-Object { Write-Host $_ }
     Write-Host ""
   }
-  Write-Host "${white}EPOS${reset}`nAgent`nV1.0.3"
+  Write-Host "${white}EPOS${reset}`nAgent`nV${eposVersion}"
 }
 Write-Host ""
 
@@ -135,4 +154,8 @@ if ($model)    { $piArgs += @("--model",    $model) }
 if ($thinking) { $piArgs += @("--thinking", $thinking) }
 
 & $piBin @piArgs @args
-exit $LASTEXITCODE
+$agentExitCode = $LASTEXITCODE
+} finally {
+  & node (Join-Path $Root "tools/updater/update.cjs") session $Root "$PID" end
+}
+exit $agentExitCode
