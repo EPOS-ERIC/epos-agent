@@ -74,3 +74,4 @@ try { Invoke-Winget -Arguments @("install", "--id", "Python.Python.3.13") } catc
 }
 Assert $failed "Real winget failures must retain the exit code"
 Write-Host "Installer tests passed on PowerShell $($PSVersionTable.PSVersion)"
+exit 0
