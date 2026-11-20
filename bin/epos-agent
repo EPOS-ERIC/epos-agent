@@ -18,6 +18,10 @@ _resolve_root() {
 }
 ROOT="${EPOS_AGENT_ROOT:-$(_resolve_root "${BASH_SOURCE[0]}")}"
 if [[ "${1:-}" == "--version" ]]; then cat "$ROOT/VERSION"; exit 0; fi
+if [[ "${1:-}" == "uninstall" ]]; then
+  shift
+  exec node "$ROOT/tools/updater/update.cjs" uninstall "$ROOT" "$@"
+fi
 if [[ "${1:-}" == "update" ]]; then
   shift
   exec node "$ROOT/tools/updater/update.cjs" update "$ROOT" "$@"

@@ -10,6 +10,10 @@ $Root = if ($env:EPOS_AGENT_ROOT) {
 }
 
 if ($args.Count -gt 0 -and $args[0] -eq "--version") { Get-Content (Join-Path $Root "VERSION"); exit 0 }
+if ($args.Count -gt 0 -and $args[0] -eq "uninstall") {
+  & node (Join-Path $Root "tools/updater/update.cjs") uninstall $Root @($args | Select-Object -Skip 1)
+  exit $LASTEXITCODE
+}
 if ($args.Count -gt 0 -and $args[0] -eq "update") {
   & node (Join-Path $Root "tools/updater/update.cjs") update $Root @($args | Select-Object -Skip 1)
   exit $LASTEXITCODE
@@ -35,7 +39,7 @@ function Stop-Agent([string]$Message) {
 
 function Import-Profile([string]$Path) {
   if (-not (Test-Path -LiteralPath $Path)) { return }
-  $allowed = @("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "EPOS_PROVIDER", "EPOS_MODEL", "EPOS_THINKING", "PI_PROVIDER", "PI_MODEL", "PI_REASONING_LEVEL")
+  $allowed = @("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "MISTRAL_API_KEY", "EPOS_PROVIDER", "EPOS_MODEL", "EPOS_THINKING", "PI_PROVIDER", "PI_MODEL", "PI_REASONING_LEVEL")
   foreach ($line in Get-Content -LiteralPath $Path) {
     if ($line -match "^\s*([A-Z0-9_]+)=(.*)$" -and $allowed -contains $matches[1]) {
       Set-Item -Path "Env:$($matches[1])" -Value $matches[2]

@@ -312,10 +312,75 @@ async function update(root, release, installDependencies = install) {
   console.log(`[EPOS] Updated to ${manifest.version}.`);
 }
 
+async function uninstall(root, args) {
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--yes')) throw new Error('Usage: epos-agent uninstall [--yes]');
+  const home = fs.realpathSync(os.homedir());
+  const relativeHome = path.relative(root, home);
+  if (root === path.parse(root).root || !relativeHome || (!relativeHome.startsWith('..' + path.sep) && relativeHome !== '..' && !path.isAbsolute(relativeHome))) {
+    throw new Error('Refusing to remove your home directory or one of its parent directories.');
+  }
+  if (fs.realpathSync(path.resolve(__dirname, '../..')) !== root) throw new Error('Run the uninstaller from the installation being removed.');
+  const marker = path.join(root, '.epos-agent-installation');
+  if (!fs.lstatSync(marker, { throwIfNoEntry: false })?.isFile()) throw new Error('Missing installation marker; refusing to delete this directory.');
+  const recorded = fs.readFileSync(marker, 'utf8').trim();
+  if (!recorded.startsWith('EPOS_AGENT_ROOT=') || fs.realpathSync(recorded.slice('EPOS_AGENT_ROOT='.length)) !== root) {
+    throw new Error('Installation marker does not match this directory.');
+  }
+  console.log(`[EPOS] WARNING: This permanently deletes the ENTIRE installation directory: ${root}`);
+  console.log('[EPOS] This includes sessions and workspace (all studies and downloaded data), saved credentials, configuration, caches, logs, runtimes and bin, plus any other files stored in that directory.');
+  console.log('[EPOS] The global launcher or installation-specific Windows user PATH entry will also be removed. System Node.js and Python are kept.');
+  if (!args.includes('--yes')) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Confirmation required. Re-run with --yes to permanently delete sessions, workspace and the entire installation.');
+    const prompt = createInterface({ input: process.stdin, output: process.stdout });
+    let answer;
+    try { answer = await prompt.question('[EPOS] Permanently uninstall EPOS Agent? [y/N] '); } finally { prompt.close(); }
+    if (!/^(y|yes|s|si|sì)$/i.test(answer.trim())) { console.log('[EPOS] Uninstall cancelled.'); return; }
+  }
+  withLock(root, () => {
+    if (fs.existsSync(path.join(root, '.epos-update-recovery.json'))) throw new Error('Run epos-agent recover-update before uninstalling.');
+    if (fs.lstatSync(path.join(root, '.epos-sessions'), { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error('Symlink in session directory; refusing to follow it.');
+    if (liveSessions(root).length) throw new Error('Close all EPOS Agent sessions before uninstalling.');
+    if (process.platform === 'win32') {
+      const script = `
+$ErrorActionPreference = 'Stop'
+$binDir = Join-Path $env:EPOS_UNINSTALL_ROOT 'bin'
+$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+if ($null -ne $userPath) {
+  $entries = @($userPath -split ';' | Where-Object {
+    [Environment]::ExpandEnvironmentVariables($_.Trim().Trim('"')).TrimEnd('\\', '/') -ine $binDir
+  })
+  [Environment]::SetEnvironmentVariable('Path', ($entries -join ';'), 'User')
+}
+`;
+      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+        stdio: 'inherit', env: { ...process.env, EPOS_UNINSTALL_ROOT: root }
+      });
+      if (result.error) throw result.error;
+      if (result.status !== 0) throw new Error('Could not remove the installation from your Windows user PATH.');
+    } else {
+      const launcher = fs.realpathSync(path.join(root, 'bin/epos-agent'));
+      for (const link of ['/usr/local/bin/epos-agent', path.join(home, '.local/bin/epos-agent')]) {
+        if (!fs.lstatSync(link, { throwIfNoEntry: false })?.isSymbolicLink() || !fs.existsSync(link) || fs.realpathSync(link) !== launcher) continue;
+        try { fs.unlinkSync(link); } catch (error) {
+          if (!['EACCES', 'EPERM'].includes(error.code) || link !== '/usr/local/bin/epos-agent') throw error;
+          console.log('[EPOS] Removing the global launcher may require your computer password.');
+          const result = spawnSync('sudo', ['unlink', link], { stdio: 'inherit' });
+          if (result.error) throw result.error;
+          if (result.status !== 0) throw new Error('Could not remove the global launcher; installation kept.');
+        }
+      }
+    }
+    process.chdir(path.dirname(root));
+    fs.rmSync(root, { recursive: true, maxRetries: 3, retryDelay: 100 });
+  });
+  console.log('[EPOS] EPOS Agent uninstalled. Sessions and workspace have been deleted.');
+}
+
 async function main() {
   const [command, rootArg, ...args] = process.argv.slice(2);
   if (!rootArg) throw new Error('Installation directory is required');
   const root = fs.realpathSync(rootArg);
+  if (command === 'uninstall') return uninstall(root, args);
   if (command === 'init') return init(root);
   if (command === 'patch-pi') return patchPi(root);
   if (command === 'copy') return copySource(root, path.resolve(args[0]));

@@ -91,6 +91,18 @@ node --test tools/updater/tests/*.test.cjs
 
 On Windows, run `./tools/updater/tests/windows.ps1` in both PowerShell 5.1 and 7. Full installation/update smoke tests run in CI using real dependencies; they require internet access.
 
+## Uninstall
+
+```text
+epos-agent uninstall
+```
+
+**Warning: uninstall permanently deletes the entire installation folder, including `sessions` and `workspace` (all studies and downloaded data), saved credentials, configuration, caches, logs, local runtimes and `bin`. Any other files inside that folder, including a Git checkout, are deleted too. Back up anything you need first.**
+
+The command displays this warning and asks for confirmation. For unattended removal, use `epos-agent uninstall --yes`; the warning is still displayed. Close all EPOS sessions first. If an interrupted update needs recovery, run `epos-agent recover-update` before uninstalling.
+
+On macOS/Linux it removes global launcher symlinks only when they point to this installation; removing `/usr/local/bin/epos-agent` may request your computer password. On Windows it removes only this installation's `bin` entry from your user PATH. Open a new terminal after uninstalling. Shared PATH entries such as `~/.local/bin`, system Node.js, Python and package managers are kept.
+
 ## Configuration
 
 Run `/login` inside the Pi harness and select your provider. Depending on the provider, you can choose:
@@ -100,13 +112,28 @@ Run `/login` inside the Pi harness and select your provider. Depending on the pr
 
 Available login methods and billing depend on the provider. Pi saves the resulting credential locally, so you don't need to edit a configuration file.
 
-Alternatively, configure your provider credentials in `config/profile.env`. A template is available at `config/profile.env.example` with ready-to-use settings for Google Gemini, Anthropic Claude and OpenAI:
+Alternatively, configure your provider credentials in `config/profile.env`. A template is available at `config/profile.env.example` with ready-to-use settings for Google Gemini, Anthropic Claude, OpenAI and Mistral AI:
 
 - **Google Gemini**: set `GEMINI_API_KEY`, `EPOS_PROVIDER=google`, `EPOS_MODEL=gemini-2.5-pro` (and optionally `EPOS_THINKING=medium`)
 - **Anthropic Claude**: set `ANTHROPIC_API_KEY`, `EPOS_PROVIDER=anthropic`, `EPOS_MODEL=claude-sonnet-4-5`
 - **OpenAI**: set `OPENAI_API_KEY`, `EPOS_PROVIDER=openai`, `EPOS_MODEL=gpt-4o`
+- **Mistral AI**: set `MISTRAL_API_KEY`, `EPOS_PROVIDER=mistral`, `EPOS_MODEL=mistral-large-latest`
 
 Alternatively, you can leave them unset to use the current Pi configuration or export the standard environment variables directly.
+
+### Local models (Ollama or LM Studio)
+
+EPOS can use models served locally by Ollama or LM Studio through Pi's existing OpenAI-compatible provider support. No MCP connector or additional EPOS dependency is needed; download and run the model in your chosen application. Use a model that supports tool calling.
+
+1. Start Ollama, or load a model in LM Studio and start its local API server. The default API URLs are `http://localhost:11434/v1` for Ollama and `http://localhost:1234/v1` for LM Studio.
+2. Copy [`config/models.json.example`](config/models.json.example) to `config/pi-agent/models.json` (create the directory if necessary). If that file already exists, merge the desired provider into its `providers` object instead of replacing it. Remove the provider you do not use.
+3. Replace the placeholder `id` with the exact model ID returned by your server's `GET /v1/models` endpoint. For Ollama, `ollama list` also shows installed model names, including their tags. For LM Studio, use the identifier exposed by its local server.
+4. Set `contextWindow` to the context actually configured on the server, within the model's supported limit, and set `maxTokens` to an output limit that fits within it. The example's 32768/4096 values are starting values, not detected capabilities. If you changed the server port, update `baseUrl`. The example keys are placeholders for unauthenticated local servers; if you enabled authentication, supply the server's actual key.
+5. Start `epos-agent` and open `/model` to select the local model. Opening `/model` reloads this configuration. Use `Ctrl+S` in the model picker to save a startup default, or set `EPOS_PROVIDER=ollama` (or `lmstudio`) and `EPOS_MODEL=<exact-model-id>` in `config/profile.env`. Existing `EPOS_PROVIDER`/`EPOS_MODEL` settings override the saved startup default.
+
+Add more entries to the provider's `models` array to register additional downloaded models. This configuration registers models; it does not download them or start their server. EPOS uses its installation-local `config/pi-agent/models.json`, rather than the standalone Pi configuration in `~/.pi/agent`.
+
+Model inference runs on your local server; EPOS discovery and data downloads still contact the scientific services. Tool-calling quality and available context depend on the selected model and server configuration.
 
 ## Token-efficient tools
 
