@@ -51,11 +51,13 @@ test('stable versions compare numerically and reject invalid versions', () => {
 
 test('package paths reject traversal, runtime data and Windows ambiguities', () => {
   for (const name of ['../outside', '/absolute', 'a/../../x', 'a\\b', 'C:/x', '.git/config', '.GIT/config',
-    '.runtime/bin', 'a/.venv/bin/python', 'config/pi-agent/auth.json', 'workspace/data',
+    '.runtime/bin', 'a/.venv/bin/python', 'config/pi-agent/auth.json', 'config/pi-agent/models.json', 'config/models.json', 'workspace/data',
     'logs/data', 'services/mcp-epos/artifacts/data', '.epos-update.json', 'a/NUL.txt', 'a./x', 'a:stream']) {
     assert.throws(() => updater.safeFile(name), name);
   }
   assert.equal(updater.safeFile('tools/updater/update.cjs'), 'tools/updater/update.cjs');
+  assert.equal(updater.safeFile('config/profile.env.example'), 'config/profile.env.example');
+  assert.equal(updater.safeFile('config/models.json.example'), 'config/models.json.example');
 });
 
 test('updates managed files, removes obsolete code and preserves user data', t => {
@@ -207,7 +209,7 @@ test('packager produces verifiable ZIP and bundle without runtime data', t => {
   const repository = path.join(directory, 'package source');
   fs.mkdirSync(repository);
   const source = path.resolve(__dirname, '../../..');
-  const names = ['VERSION', 'install.sh', 'install.ps1', 'bin/epos-agent', 'bin/epos-agent.ps1', 'tools/updater/update.cjs', 'tools/updater/package.cjs'];
+  const names = ['VERSION', 'install.sh', 'install.ps1', 'bin/epos-agent', 'bin/epos-agent.ps1', 'tools/updater/update.cjs', 'tools/updater/package.cjs', 'config/models.json.example'];
   for (const name of names) {
     fs.mkdirSync(path.dirname(path.join(repository, name)), { recursive: true });
     fs.copyFileSync(path.join(source, name), path.join(repository, name));

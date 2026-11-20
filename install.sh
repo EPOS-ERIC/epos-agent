@@ -151,9 +151,27 @@ if [[ "${EPOS_UPDATE_IN_PROGRESS:-0}" == "1" ]]; then exit 0; fi
 node "$INSTALL_ROOT/tools/updater/update.cjs" init "$INSTALL_ROOT"
 
 # ── Make epos-agent available globally ────────────────────────────────────────
+is_agent_launcher() {
+  local launcher="$1" target
+  [[ ! -d "$launcher" ]] || return 1
+  if [[ -L "$launcher" ]]; then
+    target="$(readlink "$launcher")"
+    [[ "$target" == */bin/epos-agent ]]
+  else
+    [[ -f "$launcher" ]] && grep -qF 'epos-agent: cannot find executable pi runtime' "$launcher"
+  fi
+}
+
+for launcher in /usr/local/bin/epos-agent "$HOME/.local/bin/epos-agent"; do
+  if [[ -e "$launcher" || -L "$launcher" ]]; then
+    is_agent_launcher "$launcher" || fail "Refusing to replace an unrecognized launcher: $launcher"
+  fi
+done
+
 SYMLINK_CREATED=0
 if [[ -d /usr/local/bin ]] && sudo ln -sf "$INSTALL_ROOT/bin/epos-agent" /usr/local/bin/epos-agent 2>/dev/null; then
   say "Symlink created: /usr/local/bin/epos-agent"
+  old_launcher="$HOME/.local/bin/epos-agent"
   SYMLINK_CREATED=1
 else
   # Fallback: add to ~/.local/bin (no sudo needed)
@@ -167,8 +185,19 @@ else
   done
   say "Symlink created: $HOME/.local/bin/epos-agent"
   say "Open a new terminal (or run: source ~/.zshrc) for the command to become available."
+  old_launcher=/usr/local/bin/epos-agent
   SYMLINK_CREATED=1
 fi
+
+if [[ -e "$old_launcher" || -L "$old_launcher" ]]; then
+  if [[ "$old_launcher" == /usr/local/bin/epos-agent ]]; then
+    sudo unlink "$old_launcher" || fail "Could not remove the previous launcher: $old_launcher"
+  else
+    unlink "$old_launcher" || fail "Could not remove the previous launcher: $old_launcher"
+  fi
+  say "Removed previous launcher: $old_launcher"
+fi
+hash -r 2>/dev/null || true
 
 printf '\n'
 say "Installation completed."

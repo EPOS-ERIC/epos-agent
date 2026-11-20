@@ -38,7 +38,7 @@ function safeFile(name) {
   if (parts.some(p => ['.git', '.runtime', '.venv', 'node_modules', '__pycache__'].includes(p.toLowerCase())) ||
       /^(cache|sessions|logs)(\/|$)/i.test(name) ||
       (/^workspace(\/|$)/i.test(name) && name !== 'workspace/.gitkeep') ||
-      (/^config(\/|$)/i.test(name) && name !== 'config/profile.env.example') ||
+      (/^config(\/|$)/i.test(name) && !['config/profile.env.example', 'config/models.json.example'].includes(name)) ||
       (/^services\/mcp-epos\/artifacts(\/|$)/i.test(name) && name !== 'services/mcp-epos/artifacts/.gitkeep') ||
       /^\.epos-/i.test(name) || /^\.env(?:\.|$)/i.test(name)) throw new Error(`Protected package path: ${name}`);
   return name;

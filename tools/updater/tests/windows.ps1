@@ -73,5 +73,49 @@ try { Invoke-Winget -Arguments @("install", "--id", "Python.Python.3.13") } catc
   $failed = $_.Exception.Message -like "*code 123*"
 }
 Assert $failed "Real winget failures must retain the exit code"
+
+$savedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$savedProcessPath = $env:Path
+$testDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("epos-install-" + [guid]::NewGuid())
+try {
+  $InstallRoot = Join-Path $testDirectory "new agent"
+  $oldRoot = Join-Path $testDirectory "old agent"
+  $unrelatedRoot = Join-Path $testDirectory "unrelated"
+  $mismatchedRoot = Join-Path $testDirectory "mismatched"
+  foreach ($directory in @($InstallRoot, $oldRoot, $unrelatedRoot, $mismatchedRoot)) {
+    New-Item -ItemType Directory -Path (Join-Path $directory "bin") -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $directory "bin/epos-agent.ps1") -Value "launcher"
+  }
+  $newBin = Join-Path $InstallRoot "bin"
+  $oldBin = Join-Path $oldRoot "bin"
+  $unrelatedBin = Join-Path $unrelatedRoot "bin"
+  $mismatchedBin = Join-Path $mismatchedRoot "bin"
+  Set-Content -LiteralPath (Join-Path $oldRoot ".epos-agent-installation") -Value "EPOS_AGENT_ROOT=$oldRoot"
+  Set-Content -LiteralPath (Join-Path $mismatchedRoot ".epos-agent-installation") -Value "EPOS_AGENT_ROOT=$oldRoot"
+  Set-Content -LiteralPath (Join-Path $oldBin "epos-agent") -Value "old shell launcher"
+  Set-Content -LiteralPath (Join-Path $oldRoot "credentials") -Value "keep credentials"
+  Set-Content -LiteralPath (Join-Path $oldBin "other-tool.exe") -Value "keep other tool"
+  $testPath = '"' + $oldBin + '\";' + $unrelatedBin + ';' + $mismatchedBin + ';' + $newBin.ToUpper() + '\;' + $oldBin
+  [Environment]::SetEnvironmentVariable("Path", $testPath, "User")
+  $env:Path = "$testPath;$savedProcessPath"
+  Register-AgentCommand
+  $registeredPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  Assert ($registeredPath -ceq "$newBin;$unrelatedBin;$mismatchedBin") "Must remove old and duplicate entries while preserving unrelated PATH entries"
+  Assert (($env:Path -split ';')[0] -ceq $newBin) "The current process must prefer the new installation"
+  Assert ($env:Path -notlike "*$oldBin*") "The current process must remove the old installation"
+  Assert (-not (Test-Path -LiteralPath (Join-Path $oldBin "epos-agent.ps1"))) "Must remove the previous PowerShell launcher"
+  Assert (-not (Test-Path -LiteralPath (Join-Path $oldBin "epos-agent"))) "Must remove the previous shell launcher"
+  Assert (Test-Path -LiteralPath (Join-Path $newBin "epos-agent.ps1")) "Must keep the current launcher"
+  Assert (Test-Path -LiteralPath (Join-Path $unrelatedBin "epos-agent.ps1")) "Must keep unrecognized launchers"
+  Assert (Test-Path -LiteralPath (Join-Path $mismatchedBin "epos-agent.ps1")) "Must keep installations with mismatched markers"
+  Assert ((Get-Content -LiteralPath (Join-Path $oldRoot "credentials") -Raw).Trim() -eq "keep credentials") "Must preserve user data"
+  Assert (Test-Path -LiteralPath (Join-Path $oldBin "other-tool.exe")) "Must preserve unrelated binaries"
+  Register-AgentCommand
+  Assert ([Environment]::GetEnvironmentVariable("Path", "User") -ceq $registeredPath) "Repeated installation must not duplicate PATH entries"
+} finally {
+  [Environment]::SetEnvironmentVariable("Path", $savedUserPath, "User")
+  $env:Path = $savedProcessPath
+  if (Test-Path -LiteralPath $testDirectory) { Remove-Item -LiteralPath $testDirectory -Recurse -Force }
+}
 Write-Host "Installer tests passed on PowerShell $($PSVersionTable.PSVersion)"
 exit 0

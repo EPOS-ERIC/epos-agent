@@ -131,6 +131,45 @@ function Invoke-Python([object]$Python, [string[]]$Arguments) {
   if ($LASTEXITCODE -ne 0) { Stop-Install "Python command failed: $($Arguments -join ' ')" }
 }
 
+function Register-AgentCommand {
+  $binDir = Join-Path $InstallRoot "bin"
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $oldBins = @()
+  foreach ($entry in @($userPath -split ";")) {
+    $directory = [Environment]::ExpandEnvironmentVariables($entry.Trim().Trim('"')).TrimEnd('\', '/')
+    if (-not $directory -or $directory -ieq $binDir -or [System.IO.Path]::GetFileName($directory) -ine "bin") { continue }
+    $root = Split-Path -Parent $directory
+    $marker = Join-Path $root ".epos-agent-installation"
+    if (-not (Test-Path -LiteralPath $marker -PathType Leaf)) { continue }
+    $recorded = (Get-Content -LiteralPath $marker -Raw).Trim()
+    if ($recorded -ieq "EPOS_AGENT_ROOT=$root") { $oldBins += $directory }
+  }
+  $entries = @($userPath -split ";" | Where-Object {
+    $directory = [Environment]::ExpandEnvironmentVariables($_.Trim().Trim('"')).TrimEnd('\', '/')
+    $directory -and $directory -ine $binDir -and $oldBins -notcontains $directory
+  })
+  $newPath = (@($binDir) + $entries) -join ";"
+  if ($newPath -cne $userPath) {
+    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+    Write-Status "Registered $binDir in your user PATH."
+    Write-Status "Open a new PowerShell window for the change to take effect."
+  }
+  $processEntries = @($env:Path -split ";" | Where-Object {
+    $directory = [Environment]::ExpandEnvironmentVariables($_.Trim().Trim('"')).TrimEnd('\', '/')
+    $directory -and $directory -ine $binDir -and $oldBins -notcontains $directory
+  })
+  $env:Path = (@($binDir) + $processEntries) -join ";"
+  foreach ($directory in @($oldBins | Select-Object -Unique)) {
+    foreach ($name in @("epos-agent", "epos-agent.ps1")) {
+      $launcher = Join-Path $directory $name
+      if (Test-Path -LiteralPath $launcher -PathType Leaf) {
+        Remove-Item -LiteralPath $launcher -Force
+        Write-Status "Removed previous launcher: $launcher"
+      }
+    }
+  }
+}
+
 function Install-Application([object]$Python) {
   $runtime = Join-Path $InstallRoot ".runtime"
   Write-Status "Installing pi coding agent locally"
@@ -187,14 +226,7 @@ function Install-Application([object]$Python) {
   if ($UpdateDependenciesOnly) { return }
 
   # ── Make epos-agent available globally ─────────────────────────────────────
-  $binDir = Join-Path $InstallRoot "bin"
-  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-  if (@($userPath -split ";") -notcontains $binDir) {
-    [Environment]::SetEnvironmentVariable("Path", "$userPath;$binDir", "User")
-    $env:Path = "$env:Path;$binDir"
-    Write-Status "Added $binDir to your user PATH."
-    Write-Status "Open a new PowerShell window for the change to take effect."
-  }
+  Register-AgentCommand
 }
 
 Write-Status "Preparing native Windows installation in $InstallRoot"
